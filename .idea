@@ -1,0 +1,9 @@
+This will be a CLI-based project where users can create an account, log in, and ask an LLM questions about their personal life.
+
+The idea is to make the system feel like a funny, optimistic friend who is always there to listen and give you an interesting perspective. Think of it as a kind of black box: you put in a question, situation, or something happening in your life, and it gives you a prediction or possible outcome based on the information you provide.
+
+It could be questions about your career, relationships, decisions, future plans, or just random things you're curious about. The goal isn't to take everything too seriously. The system should be entertaining, positive, and sometimes funny, while still giving responses that feel relevant to the user's situation.
+
+We'll also integrate a payment system so users can pay for the service and access premium features or additional questions. Behind the simple CLI, the project will handle things like user authentication, LLM integration, user data, usage limits, and payments.
+
+Overall, it's meant to be a fun project that feels less like talking to a traditional AI assistant and more like having a slightly goofy, optimistic friend who tries to tell you what might happen next.
