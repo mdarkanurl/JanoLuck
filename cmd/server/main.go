@@ -1,7 +1,13 @@
 package main
 
-import "fmt"
+import (
+	"github.com/mdarkanurl/JanoLuck/internal/server"
+)
 
 func main() {
-	fmt.Println("This is from server!")
+	srv := server.New()
+
+	if err := srv.Start(); err != nil {
+		panic(err)
+	}
 }
