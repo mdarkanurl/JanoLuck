@@ -7,7 +7,8 @@ import (
 )
 
 type Config struct {
-	PORT string
+	PORT         string
+	DATABASE_URL string
 }
 
 func getEnv(key, fallback string) string {
@@ -28,6 +29,7 @@ func getEnv(key, fallback string) string {
 
 func Load() Config {
 	return Config{
-		PORT: getEnv("PORT", "3000"),
+		PORT:         getEnv("PORT", "3000"),
+		DATABASE_URL: getEnv("DATABASE_URL", ""),
 	}
 }
