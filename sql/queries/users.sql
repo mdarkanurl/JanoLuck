@@ -1,9 +1,10 @@
--- name: CreateUser :one
-INSERT INTO users (gmail, password, update_at)
-VALUES ($1, $2, $3)
-RETURNING id, gmail;
+-- name: CreateUser :exec
+INSERT INTO users (email, password, update_at)
+VALUES ($1, $2, $3);
 
--- name: GetUserByGmail :one
-SELECT id, gmail, password, create_at, update_at
-FROM users
-WHERE gmail = $1;
+-- name: UserExistsByEmail :one
+SELECT EXISTS (
+    SELECT 1
+    FROM users
+    WHERE email = $1
+);

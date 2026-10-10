@@ -8,49 +8,35 @@ package database
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
-const createUser = `-- name: CreateUser :one
-INSERT INTO users (gmail, password, update_at)
+const createUser = `-- name: CreateUser :exec
+INSERT INTO users (email, password, update_at)
 VALUES ($1, $2, $3)
-RETURNING id, gmail
 `
 
 type CreateUserParams struct {
-	Gmail    string
+	Email    string
 	Password string
 	UpdateAt time.Time
 }
 
-type CreateUserRow struct {
-	ID    uuid.UUID
-	Gmail string
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
+	_, err := q.db.ExecContext(ctx, createUser, arg.Email, arg.Password, arg.UpdateAt)
+	return err
 }
 
-func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
-	row := q.db.QueryRowContext(ctx, createUser, arg.Gmail, arg.Password, arg.UpdateAt)
-	var i CreateUserRow
-	err := row.Scan(&i.ID, &i.Gmail)
-	return i, err
-}
-
-const getUserByGmail = `-- name: GetUserByGmail :one
-SELECT id, gmail, password, create_at, update_at
-FROM users
-WHERE gmail = $1
+const userExistsByEmail = `-- name: UserExistsByEmail :one
+SELECT EXISTS (
+    SELECT 1
+    FROM users
+    WHERE email = $1
+)
 `
 
-func (q *Queries) GetUserByGmail(ctx context.Context, gmail string) (User, error) {
-	row := q.db.QueryRowContext(ctx, getUserByGmail, gmail)
-	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.Gmail,
-		&i.Password,
-		&i.CreateAt,
-		&i.UpdateAt,
-	)
-	return i, err
+func (q *Queries) UserExistsByEmail(ctx context.Context, email string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, userExistsByEmail, email)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

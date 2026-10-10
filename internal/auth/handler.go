@@ -33,38 +33,18 @@ func (h *Handler) SignUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row, err := h.service.SignUp(r.Context(), req.Gmail, req.Password)
+	err := h.service.SignUp(r.Context(), req.Email, req.Password)
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrUserExists):
-			writeError(w, http.StatusConflict, "user already exists")
-		case errors.Is(err, ErrInvalidCredentials):
-			writeError(w, http.StatusBadRequest, "invalid credentials")
+		case errors.Is(err, ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrInternal):
+			writeError(w, http.StatusInternalServerError, err.Error())
 		default:
-			writeError(w, http.StatusInternalServerError, "something went wrong")
+			writeJSON(w, http.StatusCreated, AuthResponse{Message: "verify the mail", Data: nil})
 		}
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, AuthResponse{ID: row.ID, Gmail: row.Gmail})
-}
-
-func (h *Handler) SignIn(w http.ResponseWriter, r *http.Request) {
-	var req SignInRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	user, err := h.service.SignIn(r.Context(), req.Gmail, req.Password)
-	if err != nil {
-		if errors.Is(err, ErrInvalidCredentials) {
-			writeError(w, http.StatusUnauthorized, "invalid credentials")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "something went wrong")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, AuthResponse{ID: user.ID, Gmail: user.Gmail})
+	writeJSON(w, http.StatusCreated, AuthResponse{Message: "verify the mail", Data: nil})
 }

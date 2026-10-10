@@ -12,7 +12,7 @@ import (
 
 type User struct {
 	ID       uuid.UUID
-	Gmail    string
+	Email    string
 	Password string
 	CreateAt time.Time
 	UpdateAt time.Time

@@ -21,7 +21,6 @@ func NewRouter(
 
 		// public routers
 		r.Post("/auth/signup", authHandler.SignUp)
-		r.Post("/auth/signin", authHandler.SignIn)
 	})
 
 	return r

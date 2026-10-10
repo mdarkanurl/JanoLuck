@@ -2,18 +2,18 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"errors"
+	"math/rand/v2"
 	"strings"
 
-	"github.com/mdarkanurl/JanoLuck/internal/database"
 	"golang.org/x/crypto/bcrypt"
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrInvalidInput       = errors.New("invalid input")
 	ErrUserExists         = errors.New("user already exists")
 	ErrInternal           = errors.New("something went wrong")
+	ErrInvalidCredentials = errors.New("invalid credentials")
 )
 
 type Service struct {
@@ -24,56 +24,46 @@ func AuthService(repo *Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func validateCredentials(gmail, password string) error {
-	if strings.TrimSpace(gmail) == "" || strings.TrimSpace(password) == "" {
-		return ErrInvalidCredentials
+func validateInput(email, password string) error {
+	if strings.TrimSpace(email) == "" || strings.TrimSpace(password) == "" {
+		return ErrInvalidInput
 	}
-	if !strings.Contains(gmail, "@") {
-		return ErrInvalidCredentials
+	if !strings.Contains(email, "@") {
+		return ErrInvalidInput
 	}
 	if len(password) < 8 {
-		return ErrInvalidCredentials
+		return ErrInvalidInput
 	}
 	return nil
 }
 
-func (s *Service) SignUp(ctx context.Context, gmail, password string) (database.CreateUserRow, error) {
-	if err := validateCredentials(gmail, password); err != nil {
-		return database.CreateUserRow{}, err
+func (s *Service) SignUp(ctx context.Context, email, password string) error {
+	if err := validateInput(email, password); err != nil {
+		return err
+	}
+
+	userInDB, err := s.repo.IsUserExistInDB(email, ctx)
+	if err != nil {
+		return err
+	} else if userInDB == true {
+		return nil
+	}
+
+	userInRedis, err := s.repo.IsUserExistInRedis(email, ctx)
+	if err != nil {
+		return err
+	} else if userInRedis == true {
+		return nil
 	}
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return database.CreateUserRow{}, ErrInternal
+		return ErrInternal
 	}
 
-	row, err := s.repo.CreateUser(ctx, gmail, string(hashed))
-	if err != nil {
-		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "23505") {
-			return database.CreateUserRow{}, ErrUserExists
-		}
-		return database.CreateUserRow{}, ErrInternal
+	if err := s.repo.CreateUserInRedis(ctx, email, string(hashed), rand.IntN(999999-100000+1)+100000); err != nil {
+		return ErrInternal
 	}
 
-	return row, nil
-}
-
-func (s *Service) SignIn(ctx context.Context, gmail, password string) (database.User, error) {
-	if strings.TrimSpace(gmail) == "" || strings.TrimSpace(password) == "" {
-		return database.User{}, ErrInvalidCredentials
-	}
-
-	user, err := s.repo.GetUserByGmail(ctx, gmail)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return database.User{}, ErrInvalidCredentials
-		}
-		return database.User{}, ErrInternal
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		return database.User{}, ErrInvalidCredentials
-	}
-
-	return user, nil
+	return nil
 }

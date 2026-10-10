@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mdarkanurl/JanoLuck/internal/auth"
@@ -30,8 +31,14 @@ func New() *Server {
 		panic(err)
 	}
 
-	queries := database.New(db)
-	authRepo := auth.NewRepository(queries)
+	redisDB, err := strconv.Atoi(cfg.REDIS_DB)
+	if err != nil {
+		panic(err)
+	}
+
+	dbQueries := database.New(db)
+	redisQueries := database.NewRedisClient(cfg.REDIS_ADDR, cfg.REDIS_PASSWORD, redisDB)
+	authRepo := auth.NewRepository(dbQueries, redisQueries)
 	authService := auth.AuthService(authRepo)
 	authHandler := auth.AuthHandler(authService)
 	router := NewRouter(authHandler)

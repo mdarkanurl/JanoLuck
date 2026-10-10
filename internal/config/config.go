@@ -7,8 +7,11 @@ import (
 )
 
 type Config struct {
-	PORT         string
-	DATABASE_URL string
+	PORT           string
+	DATABASE_URL   string
+	REDIS_ADDR     string
+	REDIS_PASSWORD string
+	REDIS_DB       string
 }
 
 func getEnv(key, fallback string) string {
@@ -29,7 +32,10 @@ func getEnv(key, fallback string) string {
 
 func Load() Config {
 	return Config{
-		PORT:         getEnv("PORT", "3000"),
-		DATABASE_URL: getEnv("DATABASE_URL", ""),
+		PORT:           getEnv("PORT", "3000"),
+		DATABASE_URL:   getEnv("DATABASE_URL", ""),
+		REDIS_ADDR:     getEnv("REDIS_ADDR", "localhost:6379"),
+		REDIS_PASSWORD: getEnv("REDIS_PASSWORD", ""),
+		REDIS_DB:       getEnv("REDIS_DB", "0"),
 	}
 }
