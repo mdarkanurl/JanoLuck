@@ -27,6 +27,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 func (h *Handler) SignUp(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req SignUpRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -38,10 +39,14 @@ func (h *Handler) SignUp(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrInvalidInput):
 			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrUserExists):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, ErrVerificationPending):
+			writeError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, ErrInternal):
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeError(w, http.StatusInternalServerError, ErrInternal.Error())
 		default:
-			writeJSON(w, http.StatusCreated, AuthResponse{Message: "verify the mail", Data: nil})
+			writeError(w, http.StatusInternalServerError, ErrInternal.Error())
 		}
 		return
 	}
