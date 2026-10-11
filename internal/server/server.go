@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mdarkanurl/JanoLuck/internal/auth"
@@ -43,7 +44,22 @@ func New() *Server {
 	dbQueries := database.New(db)
 	redisQueries := database.NewRedisClient(cfg.REDIS_ADDR, cfg.REDIS_PASSWORD, redisDB)
 	authRepo := auth.NewRepository(dbQueries, redisQueries)
-	authService := auth.AuthService(authRepo, emailServer)
+
+	accessMinutes, err := strconv.Atoi(cfg.ACCESS_TOKEN_TTL_MINUTES)
+	if err != nil || accessMinutes <= 0 {
+		accessMinutes = 15
+	}
+	refreshDays, err := strconv.Atoi(cfg.REFRESH_TOKEN_TTL_DAYS)
+	if err != nil || refreshDays <= 0 {
+		refreshDays = 30
+	}
+	tokenService := auth.NewTokenService(
+		cfg.JWT_SECRET,
+		time.Duration(accessMinutes)*time.Minute,
+		time.Duration(refreshDays)*24*time.Hour,
+	)
+
+	authService := auth.AuthService(authRepo, emailServer, tokenService)
 	authHandler := auth.AuthHandler(authService)
 	router := NewRouter(authHandler)
 
