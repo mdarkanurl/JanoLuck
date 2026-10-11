@@ -12,6 +12,7 @@ type Config struct {
 	REDIS_ADDR     string
 	REDIS_PASSWORD string
 	REDIS_DB       string
+	RESEND_API_KEY string
 }
 
 func getEnv(key, fallback string) string {
@@ -37,5 +38,6 @@ func Load() Config {
 		REDIS_ADDR:     getEnv("REDIS_ADDR", "localhost:6379"),
 		REDIS_PASSWORD: getEnv("REDIS_PASSWORD", ""),
 		REDIS_DB:       getEnv("REDIS_DB", "0"),
+		RESEND_API_KEY: getEnv("RESEND_API_KEY", ""),
 	}
 }

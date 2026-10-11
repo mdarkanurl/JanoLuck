@@ -8,6 +8,7 @@ require (
 	github.com/lib/pq v1.12.3
 	github.com/lpernett/godotenv v0.0.0-20230527005122-0de1d4c5ef5e
 	github.com/redis/go-redis/v9 v9.23.0
+	github.com/resend/resend-go/v4 v4.8.2
 	golang.org/x/crypto v0.57.0
 )
 

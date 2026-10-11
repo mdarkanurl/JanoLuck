@@ -9,6 +9,7 @@ import (
 	"github.com/mdarkanurl/JanoLuck/internal/auth"
 	"github.com/mdarkanurl/JanoLuck/internal/config"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
+	"github.com/mdarkanurl/JanoLuck/internal/email"
 
 	_ "github.com/lib/pq"
 )
@@ -36,10 +37,13 @@ func New() *Server {
 		panic(err)
 	}
 
+	resendAPIKey := cfg.RESEND_API_KEY
+	emailServer := email.NewResendService(resendAPIKey)
+
 	dbQueries := database.New(db)
 	redisQueries := database.NewRedisClient(cfg.REDIS_ADDR, cfg.REDIS_PASSWORD, redisDB)
 	authRepo := auth.NewRepository(dbQueries, redisQueries)
-	authService := auth.AuthService(authRepo)
+	authService := auth.AuthService(authRepo, emailServer)
 	authHandler := auth.AuthHandler(authService)
 	router := NewRouter(authHandler)
 
