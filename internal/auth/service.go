@@ -82,13 +82,6 @@ func (s *Service) SignUp(ctx context.Context, email, password string) error {
 }
 
 func (s *Service) VerifyEmail(ctx context.Context, email string, code int) (*AuthTokens, error) {
-	if strings.TrimSpace(email) == "" || !strings.Contains(email, "@") {
-		return nil, ErrInvalidInput
-	}
-	if code < 100000 || code > 999999 {
-		return nil, fmt.Errorf("%w: invalid verification code", ErrInvalidCredentials)
-	}
-
 	pending, err := s.repo.GetPendingUser(ctx, email)
 	if err != nil {
 		return nil, err
@@ -157,8 +150,6 @@ func (s *Service) Login(ctx context.Context, email, password string) (*AuthToken
 	if err != nil {
 		return nil, err
 	}
-
-	fmt.Println(user)
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		return nil, ErrInvalidCredentials

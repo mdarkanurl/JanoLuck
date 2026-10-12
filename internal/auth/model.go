@@ -1,17 +1,17 @@
 package auth
 
 type SignUpRequest struct {
-	Email    string `json:"email"    validate:"required,email,max=254"`
+	Email    string `json:"email"    validate:"required,email,max=254,lowercase"`
 	Password string `json:"password" validate:"required,min=8,max=128,strong_password"`
 }
 
 type VerifyEmailRequest struct {
-	Email string `json:"email"`
-	Code  int    `json:"code"`
+	Email string `json:"email"    validate:"required,email,max=254,lowercase"`
+	Code  int    `json:"code" validate:"required,min=100000,max=999999"`
 }
 
 type SignInRequest struct {
-	Email    string `json:"email"    validate:"required,email,max=254"`
+	Email    string `json:"email"    validate:"required,email,max=254,lowercase"`
 	Password string `json:"password" validate:"required,min=8,max=128,strong_password"`
 }
 

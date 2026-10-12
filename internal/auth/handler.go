@@ -111,11 +111,24 @@ func decodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	return v, true
 }
 
+func normalizeEmail(email string) string {
+	email = strings.TrimSpace(email)
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return strings.ToLower(email)
+	}
+	local := strings.ToLower(parts[0])
+	domain := strings.ToLower(parts[1])
+	return local + "@" + domain
+}
+
 func (h *Handler) SignUp(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeJSON[SignUpRequest](w, r)
 	if !ok {
 		return
 	}
+
+	req.Email = normalizeEmail(req.Email)
 
 	if !validateRequest(req, w) {
 		return
@@ -145,6 +158,8 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.Email = normalizeEmail(req.Email)
+
 	if !validateRequest(req, w) {
 		return
 	}
@@ -166,6 +181,11 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeJSON[VerifyEmailRequest](w, r)
 	if !ok {
+		return
+	}
+
+	req.Email = normalizeEmail(req.Email)
+	if !validateRequest(req, w) {
 		return
 	}
 
