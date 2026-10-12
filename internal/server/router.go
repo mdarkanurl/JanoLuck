@@ -9,6 +9,7 @@ import (
 
 func NewRouter(
 	authHandler *auth.Handler,
+	tokenService *auth.TokenService,
 ) chi.Router {
 	r := chi.NewRouter()
 
@@ -24,6 +25,12 @@ func NewRouter(
 		r.Post("/auth/verify-email", authHandler.VerifyEmail)
 		r.Post("/auth/login", authHandler.Login)
 		r.Post("/auth/refresh", authHandler.Refresh)
+
+		// protected routes — require valid Bearer access token
+		r.Group(func(r chi.Router) {
+			r.Use(auth.AuthMiddleware(tokenService))
+			r.Get("/auth/me", authHandler.Me)
+		})
 	})
 
 	return r

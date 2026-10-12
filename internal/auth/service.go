@@ -181,3 +181,12 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*AuthTokens
 
 	return s.mintTokenPair(ctx, user.ID.String(), user.Email, oldHash)
 }
+
+func (s *Service) Me(ctx context.Context, userID string) (string, string, error) {
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return "", "", err
+	}
+
+	return user.ID.String(), user.Email, nil
+}

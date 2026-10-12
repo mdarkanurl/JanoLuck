@@ -236,3 +236,34 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, VerifyEmailResponse{Message: "tokens refreshed", Data: *tokens})
 }
+
+func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return
+	}
+
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, ErrInvalidCredentials)
+	}
+
+	id, email, err := h.service.Me(r.Context(), userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidCredentials):
+			writeError(w, http.StatusUnauthorized, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "ok",
+		"data": map[string]string{
+			"id":    id,
+			"email": email,
+		},
+	})
+}

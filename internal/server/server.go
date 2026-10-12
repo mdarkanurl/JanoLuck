@@ -61,7 +61,7 @@ func New() *Server {
 
 	authService := auth.AuthService(authRepo, emailServer, tokenService)
 	authHandler := auth.AuthHandler(authService)
-	router := NewRouter(authHandler)
+	router := NewRouter(authHandler, tokenService)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.PORT,
