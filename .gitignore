@@ -1,3 +1,16 @@
-main
+# binaries
+server
+*.exe
+*.test
+*.out
+
+# env
 .env
-vendor
+!.env.example
+
+# deps
+vendor/
+
+# ide
+.idea/
+.vscode/

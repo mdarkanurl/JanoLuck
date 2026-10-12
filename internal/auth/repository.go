@@ -70,12 +70,14 @@ func (r *Repository) CreateUserInDB(ctx context.Context, email, hashedPassword s
 	user, err := r.db.CreateUser(ctx, database.CreateUserParams{
 		Email:    email,
 		Password: hashedPassword,
-		UpdateAt: time.Now(),
 	})
 	if err != nil {
 		return database.User{}, fmt.Errorf("%w: db CreateUser: %v", ErrInternal, err)
 	}
-	return user, nil
+	return database.User{
+		ID:    user.ID,
+		Email: user.Email,
+	}, nil
 }
 
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (database.User, error) {
@@ -101,7 +103,10 @@ func (r *Repository) GetUserByID(ctx context.Context, userID string) (database.U
 		}
 		return database.User{}, fmt.Errorf("%w: db GetUserByID: %v", ErrInternal, err)
 	}
-	return user, nil
+	return database.User{
+		ID:    user.ID,
+		Email: user.Email,
+	}, nil
 }
 
 type pendingUser struct {

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
-	"strings"
 
 	"github.com/mdarkanurl/JanoLuck/internal/email"
 	"golang.org/x/crypto/bcrypt"
@@ -159,10 +158,6 @@ func (s *Service) Login(ctx context.Context, email, password string) (*AuthToken
 }
 
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (*AuthTokens, error) {
-	if strings.TrimSpace(refreshToken) == "" {
-		return nil, ErrInvalidInput
-	}
-
 	userID, _, err := s.tokens.ValidateRefreshToken(refreshToken)
 	if err != nil {
 		return nil, err

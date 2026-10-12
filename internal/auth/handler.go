@@ -210,21 +210,16 @@ func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
-	// Accept the refresh JWT from either the JSON body or the HttpOnly cookie.
-	var req RefreshRequest
-	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
-	refreshToken := req.RefreshToken
-	if refreshToken == "" {
-		if c, err := r.Cookie("refresh_token"); err == nil {
-			refreshToken = c.Value
-		}
-	}
-	if refreshToken == "" {
-		writeError(w, http.StatusBadRequest, "refresh token required")
+	req, ok := decodeJSON[RefreshRequest](w, r)
+	if !ok {
 		return
 	}
 
-	tokens, err := h.service.Refresh(r.Context(), refreshToken)
+	if !validateRequest(req, w) {
+		return
+	}
+
+	tokens, err := h.service.Refresh(r.Context(), req.RefreshToken)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidInput):

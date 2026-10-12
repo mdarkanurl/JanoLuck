@@ -29,7 +29,7 @@ type AuthTokens struct {
 }
 
 type RefreshRequest struct {
-	RefreshToken string `json:"refreshToken"`
+	RefreshToken string `json:"refreshToken" validate:"required"`
 }
 
 type VerifyEmailResponse struct {
