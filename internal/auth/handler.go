@@ -139,8 +139,35 @@ func (h *Handler) SignUp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, AuthResponse{Message: "verify the mail", Data: nil})
 }
 
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeJSON[SignInRequest](w, r)
+	if !ok {
+		return
+	}
+
+	if !validateRequest(req, w) {
+		return
+	}
+
+	tokens, err := h.service.Login(r.Context(), req.Email, req.Password)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidCredentials):
+			writeError(w, http.StatusUnauthorized, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, VerifyEmailResponse{Message: "logged in", Data: *tokens})
+}
+
 func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
-	req, _ := decodeJSON[VerifyEmailRequest](w, r)
+	req, ok := decodeJSON[VerifyEmailRequest](w, r)
+	if !ok {
+		return
+	}
 
 	tokens, err := h.service.VerifyEmail(r.Context(), req.Email, req.Code)
 	if err != nil {

@@ -11,8 +11,8 @@ type VerifyEmailRequest struct {
 }
 
 type SignInRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string `json:"email"    validate:"required,email,max=254"`
+	Password string `json:"password" validate:"required,min=8,max=128,strong_password"`
 }
 
 type AuthResponse struct {

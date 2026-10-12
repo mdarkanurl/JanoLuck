@@ -152,6 +152,21 @@ func (s *Service) mintTokenPair(ctx context.Context, userID, email, oldRefreshHa
 	}, nil
 }
 
+func (s *Service) Login(ctx context.Context, email, password string) (*AuthTokens, error) {
+	user, err := s.repo.GetUserByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println(user)
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+		return nil, ErrInvalidCredentials
+	}
+
+	return s.mintTokenPair(ctx, user.ID.String(), user.Email, "")
+}
+
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (*AuthTokens, error) {
 	if strings.TrimSpace(refreshToken) == "" {
 		return nil, ErrInvalidInput

@@ -78,6 +78,17 @@ func (r *Repository) CreateUserInDB(ctx context.Context, email, hashedPassword s
 	return user, nil
 }
 
+func (r *Repository) GetUserByEmail(ctx context.Context, email string) (database.User, error) {
+	user, err := r.db.GetUserByEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return database.User{}, ErrInvalidCredentials
+		}
+		return database.User{}, fmt.Errorf("%w: db GetUserByEmail: %v", ErrInternal, err)
+	}
+	return user, nil
+}
+
 func (r *Repository) GetUserByID(ctx context.Context, userID string) (database.User, error) {
 	id, err := uuid.Parse(userID)
 	if err != nil {

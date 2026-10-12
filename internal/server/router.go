@@ -22,6 +22,7 @@ func NewRouter(
 		// public routers
 		r.Post("/auth/signup", authHandler.SignUp)
 		r.Post("/auth/verify-email", authHandler.VerifyEmail)
+		r.Post("/auth/login", authHandler.Login)
 		r.Post("/auth/refresh", authHandler.Refresh)
 	})
 
