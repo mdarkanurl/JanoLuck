@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"unicode"
 
@@ -68,9 +69,22 @@ func validationMessage(e validator.FieldError) string {
 		return fmt.Sprintf("%s is required", e.Field())
 	case "email":
 		return "must be a valid email address"
-	case "min":
-		return fmt.Sprintf("must be at least %s characters", e.Param())
-	case "max":
+	case "min", "max":
+		if _, ok := e.Value().(VerificationCode); ok {
+			return "must be a 6-digit code"
+		}
+		switch e.Type().Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64:
+			if e.Tag() == "min" {
+				return fmt.Sprintf("must be at least %s", e.Param())
+			}
+			return fmt.Sprintf("must be at most %s", e.Param())
+		}
+		if e.Tag() == "min" {
+			return fmt.Sprintf("must be at least %s characters", e.Param())
+		}
 		return fmt.Sprintf("must be at most %s characters", e.Param())
 	case "strong_password":
 		return "password must contain at least one letter and one number"
@@ -189,7 +203,7 @@ func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokens, err := h.service.VerifyEmail(r.Context(), req.Email, req.Code)
+	tokens, err := h.service.VerifyEmail(r.Context(), req.Email, int(req.Code))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidInput):
@@ -238,14 +252,15 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
-	userID, ok := UserIDFromContext(r.Context())
+	userID, _, ok := UserIDFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "invalid or expired token")
 		return
 	}
 
 	if userID == "" {
-		writeError(w, http.StatusBadRequest, ErrInvalidCredentials)
+		writeError(w, http.StatusUnauthorized, ErrInvalidCredentials.Error())
+		return
 	}
 
 	id, email, err := h.service.Me(r.Context(), userID)
@@ -266,4 +281,84 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 			"email": email,
 		},
 	})
+}
+
+func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeJSON[ForgotPasswordRequest](w, r)
+	if !ok {
+		return
+	}
+
+	req.Email = normalizeEmail(req.Email)
+	if !validateRequest(req, w) {
+		return
+	}
+
+	if err := h.service.ForgotPassword(r.Context(), req.Email); err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, AuthResponse{Message: "if the account exists, a reset code was sent", Data: nil})
+}
+
+func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeJSON[ResetPasswordRequest](w, r)
+	if !ok {
+		return
+	}
+
+	req.Email = normalizeEmail(req.Email)
+	if !validateRequest(req, w) {
+		return
+	}
+
+	err := h.service.ResetPassword(r.Context(), req.Email, int(req.Code), req.NewPassword)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrInvalidCredentials):
+			writeError(w, http.StatusUnauthorized, err.Error())
+		case errors.Is(err, ErrTokenExpired):
+			writeError(w, http.StatusGone, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, AuthResponse{Message: "password reset successfully", Data: nil})
+}
+
+func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeJSON[ChangePasswordRequest](w, r)
+	if !ok {
+		return
+	}
+
+	if !validateRequest(req, w) {
+		return
+	}
+
+	userID, userEmail, ok := UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return
+	}
+
+	err := h.service.ChangePassword(r.Context(), userID, userEmail, req.CurrentPassword, req.NewPassword)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrInvalidCredentials):
+			writeError(w, http.StatusUnauthorized, "current password is incorrect")
+		default:
+			writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, AuthResponse{Message: "password changed successfully", Data: nil})
 }

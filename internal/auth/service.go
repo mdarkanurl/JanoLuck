@@ -190,3 +190,89 @@ func (s *Service) Me(ctx context.Context, userID string) (string, string, error)
 
 	return user.ID.String(), user.Email, nil
 }
+
+func (s *Service) ForgotPassword(ctx context.Context, email string) error {
+	exists, err := s.repo.IsUserExistInDB(email, ctx)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+
+	n, err := rand.Int(rand.Reader, big.NewInt(900000))
+	if err != nil {
+		return fmt.Errorf("%w: generate reset code: %v", ErrInternal, err)
+	}
+	rawCode := int(n.Int64()) + 100000
+
+	if err := s.repo.CreatePasswordReset(ctx, email, hashCode(rawCode)); err != nil {
+		return err
+	}
+
+	// TODO use here asynchronous job processing
+	if err := s.emailServer.Send(email, "reset your password", "here is your password reset code:"+strconv.Itoa(rawCode)); err != nil {
+		return fmt.Errorf("%w: send reset code: %v", ErrInternal, err)
+	}
+
+	return nil
+}
+
+func (s *Service) ResetPassword(ctx context.Context, email string, code int, newPassword string) error {
+	wantHash, err := s.repo.GetPasswordReset(ctx, email)
+	if err != nil {
+		return err
+	}
+
+	if subtle.ConstantTimeCompare([]byte(hashCode(code)), []byte(wantHash)) != 1 {
+		return ErrInvalidCredentials
+	}
+
+	user, err := s.repo.GetUserByEmail(ctx, email)
+	if err != nil {
+		_ = s.repo.DeletePasswordReset(ctx, email)
+		return err
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("%w: hash password: %v", ErrInternal, err)
+	}
+
+	if err := s.repo.UpdateUserPassword(ctx, user.ID.String(), string(hashed)); err != nil {
+		return err
+	}
+
+	_ = s.repo.DeletePasswordReset(ctx, email)
+	_ = s.repo.RevokeRefreshTokensForUser(ctx, user.ID.String())
+
+	return nil
+}
+
+func (s *Service) ChangePassword(ctx context.Context, userID, userEmail, currentPassword, newPassword string) error {
+	if subtle.ConstantTimeCompare([]byte(currentPassword), []byte(newPassword)) == 1 {
+		return fmt.Errorf("%w: new password must be different", ErrInvalidInput)
+	}
+
+	user, err := s.repo.GetUserByEmail(ctx, userEmail)
+	if err != nil {
+		return err
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(currentPassword)); err != nil {
+		return ErrInvalidCredentials
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("%w: hash password: %v", ErrInternal, err)
+	}
+
+	if err := s.repo.UpdateUserPassword(ctx, user.ID.String(), string(hashed)); err != nil {
+		return err
+	}
+
+	_ = s.repo.RevokeRefreshTokensForUser(ctx, user.ID.String())
+
+	return nil
+}

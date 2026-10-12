@@ -80,6 +80,23 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow
 	return i, err
 }
 
+const updateUserPassword = `-- name: UpdateUserPassword :exec
+UPDATE users
+SET password = $2, update_at = $3
+WHERE id = $1
+`
+
+type UpdateUserPasswordParams struct {
+	ID       uuid.UUID
+	Password string
+	UpdateAt time.Time
+}
+
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
+	_, err := q.db.ExecContext(ctx, updateUserPassword, arg.ID, arg.Password, arg.UpdateAt)
+	return err
+}
+
 const userExistsByEmail = `-- name: UserExistsByEmail :one
 SELECT EXISTS (
     SELECT 1

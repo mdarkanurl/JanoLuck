@@ -147,6 +147,12 @@ func (r *Repository) StoreRefreshToken(ctx context.Context, userID, refreshHash 
 	if err := r.redis.Set(ctx, "refresh:"+refreshHash, userID, ttl).Err(); err != nil {
 		return fmt.Errorf("%w: redis Set refresh token: %v", ErrInternal, err)
 	}
+	// Track the token hash per user so all sessions can be revoked
+	// on password change/reset.
+	if err := r.redis.SAdd(ctx, "refresh_by_user:"+userID, refreshHash).Err(); err != nil {
+		return fmt.Errorf("%w: redis SAdd refresh index: %v", ErrInternal, err)
+	}
+	_ = r.redis.Expire(ctx, "refresh_by_user:"+userID, ttl).Err()
 	return nil
 }
 
@@ -167,6 +173,74 @@ func (r *Repository) GetRefreshUserID(ctx context.Context, refreshHash string) (
 func (r *Repository) DeleteRefreshToken(ctx context.Context, refreshHash string) error {
 	if err := r.redis.Del(ctx, "refresh:"+refreshHash).Err(); err != nil {
 		return fmt.Errorf("%w: redis Del refresh token: %v", ErrInternal, err)
+	}
+	return nil
+}
+
+func (r *Repository) RevokeRefreshTokensForUser(ctx context.Context, userID string) error {
+	hashes, err := r.redis.SMembers(ctx, "refresh_by_user:"+userID).Result()
+	if err != nil {
+		return fmt.Errorf("%w: redis SMembers refresh index: %v", ErrInternal, err)
+	}
+	if len(hashes) > 0 {
+		keys := make([]string, 0, len(hashes)+1)
+		for _, h := range hashes {
+			keys = append(keys, "refresh:"+h)
+		}
+		keys = append(keys, "refresh_by_user:"+userID)
+		if err := r.redis.Del(ctx, keys...).Err(); err != nil {
+			return fmt.Errorf("%w: redis Del refresh tokens: %v", ErrInternal, err)
+		}
+		return nil
+	}
+	if err := r.redis.Del(ctx, "refresh_by_user:"+userID).Err(); err != nil {
+		return fmt.Errorf("%w: redis Del refresh index: %v", ErrInternal, err)
+	}
+	return nil
+}
+
+func (r *Repository) UpdateUserPassword(ctx context.Context, userID, hashedPassword string) error {
+	id, err := uuid.Parse(userID)
+	if err != nil {
+		return fmt.Errorf("%w: invalid user id", ErrInvalidCredentials)
+	}
+	if err := r.db.UpdateUserPassword(ctx, database.UpdateUserPasswordParams{
+		ID:       id,
+		Password: hashedPassword,
+		UpdateAt: time.Now(),
+	}); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvalidCredentials
+		}
+		return fmt.Errorf("%w: db UpdateUserPassword: %v", ErrInternal, err)
+	}
+	return nil
+}
+
+func (r *Repository) CreatePasswordReset(ctx context.Context, email, codeHash string) error {
+	if err := r.redis.Set(ctx, "reset:"+email, codeHash, 10*time.Minute).Err(); err != nil {
+		return fmt.Errorf("%w: redis Set reset code: %v", ErrInternal, err)
+	}
+	return nil
+}
+
+func (r *Repository) GetPasswordReset(ctx context.Context, email string) (string, error) {
+	codeHash, err := r.redis.Get(ctx, "reset:"+email).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return "", ErrTokenExpired
+		}
+		return "", fmt.Errorf("%w: redis Get reset code: %v", ErrInternal, err)
+	}
+	if codeHash == "" {
+		return "", ErrTokenExpired
+	}
+	return codeHash, nil
+}
+
+func (r *Repository) DeletePasswordReset(ctx context.Context, email string) error {
+	if err := r.redis.Del(ctx, "reset:"+email).Err(); err != nil {
+		return fmt.Errorf("%w: redis Del reset code: %v", ErrInternal, err)
 	}
 	return nil
 }

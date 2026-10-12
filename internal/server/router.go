@@ -25,11 +25,14 @@ func NewRouter(
 		r.Post("/auth/verify-email", authHandler.VerifyEmail)
 		r.Post("/auth/login", authHandler.Login)
 		r.Post("/auth/refresh", authHandler.Refresh)
+		r.Post("/auth/forgot-password", authHandler.ForgotPassword)
+		r.Post("/auth/reset-password", authHandler.ResetPassword)
 
 		// protected routes — require valid Bearer access token
 		r.Group(func(r chi.Router) {
 			r.Use(auth.AuthMiddleware(tokenService))
 			r.Get("/auth/me", authHandler.Me)
+			r.Post("/auth/change-password", authHandler.ChangePassword)
 		})
 	})
 

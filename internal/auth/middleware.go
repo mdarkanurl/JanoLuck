@@ -55,9 +55,10 @@ func AuthMiddleware(tokens *TokenService) func(http.Handler) http.Handler {
 	}
 }
 
-func UserIDFromContext(ctx context.Context) (string, bool) {
-	userID, ok := ctx.Value(UserIDKey).(string)
-	return userID, ok && userID != ""
+func UserIDFromContext(ctx context.Context) (string, string, bool) {
+	userID, ok1 := ctx.Value(UserIDKey).(string)
+	email, ok2 := ctx.Value(EmailKey).(string)
+	return userID, email, ok1 && ok2 && userID != "" && email != ""
 }
 
 func writeAuthError(w http.ResponseWriter, msg string, status int) {
