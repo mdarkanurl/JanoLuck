@@ -3,12 +3,19 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
+	"unicode"
+
+	"github.com/go-playground/validator/v10"
 )
 
 type Handler struct {
 	service *Service
 }
+
+var validate = validator.New()
 
 func AuthHandler(service *Service) *Handler {
 	return &Handler{
@@ -22,22 +29,97 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, ErrorResponse{Error: msg})
+func writeError(w http.ResponseWriter, status int, msg any) {
+	switch v := msg.(type) {
+	case ErrorResponse:
+		writeJSON(w, status, v)
+	case string:
+		writeJSON(w, status, ErrorResponse{Error: v})
+	case error:
+		writeJSON(w, status, ErrorResponse{Error: v.Error()})
+	default:
+		writeJSON(w, status, ErrorResponse{Error: "internal server error"})
+	}
+}
+
+func init() {
+	_ = validate.RegisterValidation("strong_password", strongPassword)
+}
+
+func strongPassword(fl validator.FieldLevel) bool {
+	password := fl.Field().String()
+
+	var hasNumber, hasLetter bool
+	for _, char := range password {
+		switch {
+		case unicode.IsNumber(char):
+			hasNumber = true
+		case unicode.IsLetter(char):
+			hasLetter = true
+		}
+	}
+
+	return hasNumber && hasLetter
+}
+
+func validationMessage(e validator.FieldError) string {
+	switch e.Tag() {
+	case "required":
+		return fmt.Sprintf("%s is required", e.Field())
+	case "email":
+		return "must be a valid email address"
+	case "min":
+		return fmt.Sprintf("must be at least %s characters", e.Param())
+	case "max":
+		return fmt.Sprintf("must be at most %s characters", e.Param())
+	case "strong_password":
+		return "password must contain at least one letter and one number"
+	default:
+		return fmt.Sprintf("failed on '%s' validation", e.Tag())
+	}
+}
+
+func validateRequest[T any](req T, w http.ResponseWriter) bool {
+	if err := validate.Struct(req); err != nil {
+		var fields []ValidationError
+
+		for _, e := range err.(validator.ValidationErrors) {
+			fields = append(fields, ValidationError{
+				Field:   strings.ToLower(e.Field()),
+				Message: validationMessage(e),
+			})
+		}
+
+		writeError(w, http.StatusBadRequest, ErrorResponse{
+			Error:  "invalid_input",
+			Fields: fields,
+		})
+		return false
+	}
+	return true
 }
 
 func decodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	var v T
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeError(w, http.StatusBadRequest, ErrorResponse{
+			Error: "invalid request body",
+		})
 		return v, false
 	}
 	return v, true
 }
 
 func (h *Handler) SignUp(w http.ResponseWriter, r *http.Request) {
-	req, _ := decodeJSON[SignUpRequest](w, r)
+	req, ok := decodeJSON[SignUpRequest](w, r)
+	if !ok {
+		return
+	}
+
+	if !validateRequest(req, w) {
+		return
+	}
 
 	err := h.service.SignUp(r.Context(), req.Email, req.Password)
 	if err != nil {

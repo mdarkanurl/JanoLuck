@@ -40,24 +40,7 @@ func hashCode(code int) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func validateInput(email, password string) error {
-	if strings.TrimSpace(email) == "" || strings.TrimSpace(password) == "" {
-		return ErrInvalidInput
-	}
-	if !strings.Contains(email, "@") {
-		return ErrInvalidInput
-	}
-	if len(password) < 8 {
-		return ErrInvalidInput
-	}
-	return nil
-}
-
 func (s *Service) SignUp(ctx context.Context, email, password string) error {
-	if err := validateInput(email, password); err != nil {
-		return err
-	}
-
 	userInDB, err := s.repo.IsUserExistInDB(email, ctx)
 	if err != nil {
 		return err
