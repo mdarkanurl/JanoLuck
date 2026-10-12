@@ -276,3 +276,8 @@ func (s *Service) ChangePassword(ctx context.Context, userID, userEmail, current
 
 	return nil
 }
+
+func (s *Service) Logout(ctx context.Context, userID string) error {
+	_ = s.repo.RevokeRefreshTokensForUser(ctx, userID)
+	return nil
+}

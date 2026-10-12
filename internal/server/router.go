@@ -33,6 +33,7 @@ func NewRouter(
 			r.Use(auth.AuthMiddleware(tokenService))
 			r.Get("/auth/me", authHandler.Me)
 			r.Post("/auth/change-password", authHandler.ChangePassword)
+			r.Post("/auth/logout", authHandler.Logout)
 		})
 	})
 

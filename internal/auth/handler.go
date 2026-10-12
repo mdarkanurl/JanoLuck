@@ -362,3 +362,18 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, AuthResponse{Message: "password changed successfully", Data: nil})
 }
+
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	userID, _, ok := UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return
+	}
+
+	if err := h.service.Logout(r.Context(), userID); err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, AuthResponse{Message: "logged out", Data: nil})
+}
