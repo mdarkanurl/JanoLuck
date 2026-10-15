@@ -5,10 +5,20 @@
 package database
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+type Profile struct {
+	ID        uuid.UUID
+	Name      string
+	Questions json.RawMessage
+	Userid    uuid.UUID
+	CreateAt  time.Time
+	UpdateAt  time.Time
+}
 
 type User struct {
 	ID       uuid.UUID

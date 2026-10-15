@@ -5,11 +5,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mdarkanurl/JanoLuck/internal/auth"
+	"github.com/mdarkanurl/JanoLuck/internal/users"
 )
 
 func NewRouter(
 	authHandler *auth.Handler,
 	tokenService *auth.TokenService,
+	usersHandler *users.Handler,
 ) chi.Router {
 	r := chi.NewRouter()
 
@@ -34,6 +36,8 @@ func NewRouter(
 			r.Get("/auth/me", authHandler.Me)
 			r.Post("/auth/change-password", authHandler.ChangePassword)
 			r.Post("/auth/logout", authHandler.Logout)
+
+			r.Post("/profiles", usersHandler.CreateProfile)
 		})
 	})
 

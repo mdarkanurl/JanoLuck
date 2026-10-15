@@ -11,6 +11,7 @@ import (
 	"github.com/mdarkanurl/JanoLuck/internal/config"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
 	"github.com/mdarkanurl/JanoLuck/internal/email"
+	"github.com/mdarkanurl/JanoLuck/internal/users"
 
 	_ "github.com/lib/pq"
 )
@@ -61,7 +62,12 @@ func New() *Server {
 
 	authService := auth.AuthService(authRepo, emailServer, tokenService)
 	authHandler := auth.AuthHandler(authService)
-	router := NewRouter(authHandler, tokenService)
+
+	usersRepo := users.NewRepository(dbQueries)
+	usersService := users.NewService(usersRepo)
+	usersHandler := users.NewHandler(usersService)
+
+	router := NewRouter(authHandler, tokenService, usersHandler)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.PORT,
