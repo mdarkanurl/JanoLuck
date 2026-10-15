@@ -75,6 +75,15 @@ func (r *Repository) UpdateProfile(ctx context.Context, userID uuid.UUID, name s
 	return profile, nil
 }
 
+func (r *Repository) ProfileExists(ctx context.Context, userID uuid.UUID) (bool, error) {
+	exists, err := r.db.ProfileExistsByUserID(ctx, userID)
+	if err != nil {
+		return false, fmt.Errorf("%w: db ProfileExistsByUserID: %v", ErrInternal, err)
+	}
+
+	return exists, nil
+}
+
 func isUniqueViolation(err error) bool {
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) && pqErr.Code == "23505" {

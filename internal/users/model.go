@@ -59,6 +59,16 @@ type ProfileResponse struct {
 	Data    ProfileData `json:"data"`
 }
 
+type ProfileExistsData struct {
+	Exists bool   `json:"exists"`
+	UserID string `json:"userId"`
+}
+
+type ProfileExistsResponse struct {
+	Message string            `json:"message"`
+	Data    ProfileExistsData `json:"data"`
+}
+
 type ValidationError struct {
 	Field   string `json:"field"`
 	Message string `json:"message"`

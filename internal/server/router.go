@@ -38,6 +38,7 @@ func NewRouter(
 			r.Post("/auth/logout", authHandler.Logout)
 
 			r.Post("/profiles", usersHandler.CreateProfile)
+			r.Get("/profiles/exists", usersHandler.ProfileExists)
 			r.Get("/profiles", usersHandler.GetProfile)
 			r.Put("/profiles", usersHandler.UpdateProfile)
 		})

@@ -194,6 +194,33 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) ProfileExists(w http.ResponseWriter, r *http.Request) {
+	userID, _, ok := auth.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return
+	}
+
+	exists, err := h.service.ProfileExists(r.Context(), userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ProfileExistsResponse{
+		Message: "profile status retrieved",
+		Data: ProfileExistsData{
+			Exists: exists,
+			UserID: userID,
+		},
+	})
+}
+
 func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeJSON[UpdateProfileRequest](w, r)
 	if !ok {

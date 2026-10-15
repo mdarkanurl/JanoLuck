@@ -68,6 +68,21 @@ func (q *Queries) GetProfileByUserID(ctx context.Context, userid uuid.UUID) (Get
 	return i, err
 }
 
+const profileExistsByUserID = `-- name: ProfileExistsByUserID :one
+SELECT EXISTS(
+    SELECT 1
+    FROM profiles
+    WHERE userId = $1
+)
+`
+
+func (q *Queries) ProfileExistsByUserID(ctx context.Context, userid uuid.UUID) (bool, error) {
+	row := q.db.QueryRowContext(ctx, profileExistsByUserID, userid)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const updateProfile = `-- name: UpdateProfile :one
 UPDATE profiles
 SET name = $2, questions = $3

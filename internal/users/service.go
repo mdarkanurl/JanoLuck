@@ -57,6 +57,15 @@ func (s *Service) GetProfile(ctx context.Context, userIDStr string) (database.Ge
 	return s.repo.GetProfileByUserID(ctx, userID)
 }
 
+func (s *Service) ProfileExists(ctx context.Context, userIDStr string) (bool, error) {
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil || userID == uuid.Nil {
+		return false, fmt.Errorf("%w: invalid user id", ErrInvalidInput)
+	}
+
+	return s.repo.ProfileExists(ctx, userID)
+}
+
 func (s *Service) UpdateProfile(ctx context.Context, userIDStr string, req UpdateProfileRequest) (database.UpdateProfileRow, error) {
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil || userID == uuid.Nil {
