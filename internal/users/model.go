@@ -6,6 +6,7 @@ var FixedQuestions = []string{
 }
 
 type Question struct {
+	Index    int    `json:"index"    validate:"min=0"`
 	Question string `json:"question" validate:"required,min=1,max=1000"`
 	Answer   string `json:"answer"   validate:"required,min=1,max=2000"`
 }
@@ -26,7 +27,7 @@ func BuildFixedQuestions(qOne, qTwo string) []Question {
 	answers := []string{qOne, qTwo}
 	questions := make([]Question, len(FixedQuestions))
 	for i, q := range FixedQuestions {
-		questions[i] = Question{Question: q, Answer: answers[i]}
+		questions[i] = Question{Index: i, Question: q, Answer: answers[i]}
 	}
 	return questions
 }
