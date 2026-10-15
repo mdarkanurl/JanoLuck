@@ -137,7 +137,6 @@ func TestTokenService_TamperedTokenRejected(t *testing.T) {
 		t.Fatalf("expected 3 token parts, got %d", len(parts))
 	}
 
-	// Flip a character in the payload; signature must no longer match.
 	tamperedPayload := parts[1]
 	if tamperedPayload[0] == 'A' {
 		tamperedPayload = "B" + tamperedPayload[1:]

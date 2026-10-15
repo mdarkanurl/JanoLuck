@@ -7,9 +7,6 @@ import (
 	"strings"
 )
 
-// VerificationCode is a 6-digit numeric code. It accepts both JSON numbers
-// ({"code": 123456}) and JSON strings ({"code": "123456"}) because many
-// clients serialize form input as strings.
 type VerificationCode int
 
 func (c *VerificationCode) UnmarshalJSON(data []byte) error {

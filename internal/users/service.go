@@ -2,8 +2,10 @@ package users
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
@@ -55,13 +57,60 @@ func (s *Service) GetProfile(ctx context.Context, userIDStr string) (database.Ge
 	return s.repo.GetProfileByUserID(ctx, userID)
 }
 
-func (s *Service) UpdateProfile(ctx context.Context, userIDStr, name, qOne, qTwo string) (database.UpdateProfileRow, error) {
+func (s *Service) UpdateProfile(ctx context.Context, userIDStr string, req UpdateProfileRequest) (database.UpdateProfileRow, error) {
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil || userID == uuid.Nil {
 		return database.UpdateProfileRow{}, fmt.Errorf("%w: invalid user id", ErrInvalidInput)
 	}
 
-	questions := BuildFixedQuestions(qOne, qTwo)
+	hasName := req.Name != nil && strings.TrimSpace(*req.Name) != ""
+	hasQuestionUpdates := len(req.Questions) > 0
+
+	if !hasName && !hasQuestionUpdates {
+		return database.UpdateProfileRow{}, fmt.Errorf("%w: provide name or questions to update", ErrInvalidInput)
+	}
+
+	existing, err := s.repo.GetProfileByUserID(ctx, userID)
+	if err != nil {
+		return database.UpdateProfileRow{}, err
+	}
+
+	var questions []Question
+	if err := json.Unmarshal(existing.Questions, &questions); err != nil {
+		return database.UpdateProfileRow{}, fmt.Errorf("%w: corrupt profile questions: %v", ErrInternal, err)
+	}
+
+	name := existing.Name
+	if hasName {
+		name = strings.TrimSpace(*req.Name)
+	}
+
+	if hasQuestionUpdates {
+		seen := make(map[int]struct{}, len(req.Questions))
+		for _, u := range req.Questions {
+			targetIndex, ok := u.QuestionIndex()
+			if !ok {
+				return database.UpdateProfileRow{}, fmt.Errorf("%w: index/id is required for each question", ErrInvalidInput)
+			}
+			if u.Index != nil && u.ID != nil && *u.Index != *u.ID {
+				return database.UpdateProfileRow{}, fmt.Errorf("%w: index and id must match", ErrInvalidInput)
+			}
+			if u.Answer == nil || strings.TrimSpace(*u.Answer) == "" {
+				return database.UpdateProfileRow{}, fmt.Errorf("%w: answer is required for each question", ErrInvalidInput)
+			}
+
+			idx := *targetIndex
+			if idx < 0 || idx >= len(questions) {
+				return database.UpdateProfileRow{}, fmt.Errorf("%w: invalid question index", ErrInvalidInput)
+			}
+			if _, dup := seen[idx]; dup {
+				return database.UpdateProfileRow{}, fmt.Errorf("%w: duplicate question index", ErrInvalidInput)
+			}
+			seen[idx] = struct{}{}
+
+			questions[idx].Answer = strings.TrimSpace(*u.Answer)
+		}
+	}
 
 	return s.repo.UpdateProfile(ctx, userID, name, questions)
 }

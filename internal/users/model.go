@@ -17,10 +17,25 @@ type CreateProfileRequest struct {
 	QTwo string `json:"qTwo"  validate:"required,min=1,max=2000"`
 }
 
+type QuestionAnswerUpdate struct {
+	Index  *int    `json:"index,omitempty"  validate:"omitempty,min=0"`
+	ID     *int    `json:"id,omitempty"     validate:"omitempty,min=0"`
+	Answer *string `json:"answer"           validate:"required,min=1,max=2000"`
+}
+
+func (q QuestionAnswerUpdate) QuestionIndex() (*int, bool) {
+	if q.Index != nil {
+		return q.Index, true
+	}
+	if q.ID != nil {
+		return q.ID, true
+	}
+	return nil, false
+}
+
 type UpdateProfileRequest struct {
-	Name string `json:"name"  validate:"required,min=1,max=100"`
-	QOne string `json:"qOne"  validate:"required,min=1,max=2000"`
-	QTwo string `json:"qTwo"  validate:"required,min=1,max=2000"`
+	Name      *string                `json:"name,omitempty"      validate:"omitempty,min=1,max=100"`
+	Questions []QuestionAnswerUpdate `json:"questions,omitempty" validate:"omitempty,dive"`
 }
 
 func BuildFixedQuestions(qOne, qTwo string) []Question {

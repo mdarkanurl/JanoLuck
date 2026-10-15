@@ -147,8 +147,7 @@ func (r *Repository) StoreRefreshToken(ctx context.Context, userID, refreshHash 
 	if err := r.redis.Set(ctx, "refresh:"+refreshHash, userID, ttl).Err(); err != nil {
 		return fmt.Errorf("%w: redis Set refresh token: %v", ErrInternal, err)
 	}
-	// Track the token hash per user so all sessions can be revoked
-	// on password change/reset.
+
 	if err := r.redis.SAdd(ctx, "refresh_by_user:"+userID, refreshHash).Err(); err != nil {
 		return fmt.Errorf("%w: redis SAdd refresh index: %v", ErrInternal, err)
 	}

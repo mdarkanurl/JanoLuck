@@ -200,11 +200,23 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = strings.TrimSpace(req.Name)
-	req.QOne = strings.TrimSpace(req.QOne)
-	req.QTwo = strings.TrimSpace(req.QTwo)
+	if req.Name != nil {
+		trimmed := strings.TrimSpace(*req.Name)
+		req.Name = &trimmed
+	}
+	for i := range req.Questions {
+		if req.Questions[i].Answer != nil {
+			trimmed := strings.TrimSpace(*req.Questions[i].Answer)
+			req.Questions[i].Answer = &trimmed
+		}
+	}
 
 	if !validateRequest(req, w) {
+		return
+	}
+
+	if req.Name == nil && len(req.Questions) == 0 {
+		writeError(w, http.StatusBadRequest, "provide name or questions to update")
 		return
 	}
 
@@ -214,7 +226,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.service.UpdateProfile(r.Context(), userID, req.Name, req.QOne, req.QTwo)
+	result, err := h.service.UpdateProfile(r.Context(), userID, req)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidInput):
