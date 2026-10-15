@@ -45,3 +45,23 @@ func (s *Service) CreateProfile(ctx context.Context, userIDStr, name, qOne, qTwo
 
 	return profile, nil
 }
+
+func (s *Service) GetProfile(ctx context.Context, userIDStr string) (database.GetProfileByUserIDRow, error) {
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil || userID == uuid.Nil {
+		return database.GetProfileByUserIDRow{}, fmt.Errorf("%w: invalid user id", ErrInvalidInput)
+	}
+
+	return s.repo.GetProfileByUserID(ctx, userID)
+}
+
+func (s *Service) UpdateProfile(ctx context.Context, userIDStr, name, qOne, qTwo string) (database.UpdateProfileRow, error) {
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil || userID == uuid.Nil {
+		return database.UpdateProfileRow{}, fmt.Errorf("%w: invalid user id", ErrInvalidInput)
+	}
+
+	questions := BuildFixedQuestions(qOne, qTwo)
+
+	return s.repo.UpdateProfile(ctx, userID, name, questions)
+}

@@ -16,6 +16,12 @@ type CreateProfileRequest struct {
 	QTwo string `json:"qTwo"  validate:"required,min=1,max=2000"`
 }
 
+type UpdateProfileRequest struct {
+	Name string `json:"name"  validate:"required,min=1,max=100"`
+	QOne string `json:"qOne"  validate:"required,min=1,max=2000"`
+	QTwo string `json:"qTwo"  validate:"required,min=1,max=2000"`
+}
+
 func BuildFixedQuestions(qOne, qTwo string) []Question {
 	answers := []string{qOne, qTwo}
 	questions := make([]Question, len(FixedQuestions))

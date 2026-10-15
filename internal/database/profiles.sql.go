@@ -67,3 +67,35 @@ func (q *Queries) GetProfileByUserID(ctx context.Context, userid uuid.UUID) (Get
 	)
 	return i, err
 }
+
+const updateProfile = `-- name: UpdateProfile :one
+UPDATE profiles
+SET name = $2, questions = $3
+WHERE userId = $1
+RETURNING id, name, questions, userId
+`
+
+type UpdateProfileParams struct {
+	Userid    uuid.UUID
+	Name      string
+	Questions json.RawMessage
+}
+
+type UpdateProfileRow struct {
+	ID        uuid.UUID
+	Name      string
+	Questions json.RawMessage
+	Userid    uuid.UUID
+}
+
+func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (UpdateProfileRow, error) {
+	row := q.db.QueryRowContext(ctx, updateProfile, arg.Userid, arg.Name, arg.Questions)
+	var i UpdateProfileRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Questions,
+		&i.Userid,
+	)
+	return i, err
+}

@@ -54,6 +54,27 @@ func (r *Repository) GetProfileByUserID(ctx context.Context, userID uuid.UUID) (
 	return profile, nil
 }
 
+func (r *Repository) UpdateProfile(ctx context.Context, userID uuid.UUID, name string, questions []Question) (database.UpdateProfileRow, error) {
+	raw, err := json.Marshal(questions)
+	if err != nil {
+		return database.UpdateProfileRow{}, fmt.Errorf("%w: marshal questions: %v", ErrInternal, err)
+	}
+
+	profile, err := r.db.UpdateProfile(ctx, database.UpdateProfileParams{
+		Userid:    userID,
+		Name:      name,
+		Questions: raw,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return database.UpdateProfileRow{}, ErrNotFound
+		}
+		return database.UpdateProfileRow{}, fmt.Errorf("%w: db UpdateProfile: %v", ErrInternal, err)
+	}
+
+	return profile, nil
+}
+
 func isUniqueViolation(err error) bool {
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) && pqErr.Code == "23505" {

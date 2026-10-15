@@ -156,3 +156,90 @@ func (h *Handler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 }
+
+func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
+	userID, _, ok := auth.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return
+	}
+
+	result, err := h.service.GetProfile(r.Context(), userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrNotFound):
+			writeError(w, http.StatusNotFound, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		}
+		return
+	}
+
+	var questions []Question
+	if err := json.Unmarshal(result.Questions, &questions); err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ProfileResponse{
+		Message: "profile retrieved",
+		Data: ProfileData{
+			ID:        result.ID.String(),
+			Name:      result.Name,
+			Questions: questions,
+			UserID:    result.Userid.String(),
+		},
+	})
+}
+
+func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeJSON[UpdateProfileRequest](w, r)
+	if !ok {
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	req.QOne = strings.TrimSpace(req.QOne)
+	req.QTwo = strings.TrimSpace(req.QTwo)
+
+	if !validateRequest(req, w) {
+		return
+	}
+
+	userID, _, ok := auth.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return
+	}
+
+	result, err := h.service.UpdateProfile(r.Context(), userID, req.Name, req.QOne, req.QTwo)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ErrNotFound):
+			writeError(w, http.StatusNotFound, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		}
+		return
+	}
+
+	var questions []Question
+	if err := json.Unmarshal(result.Questions, &questions); err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ProfileResponse{
+		Message: "profile updated",
+		Data: ProfileData{
+			ID:        result.ID.String(),
+			Name:      result.Name,
+			Questions: questions,
+			UserID:    result.Userid.String(),
+		},
+	})
+}
