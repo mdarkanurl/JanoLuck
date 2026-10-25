@@ -5,11 +5,23 @@
 package database
 
 import (
+	"database/sql"
 	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+type Chat struct {
+	ID        uuid.UUID
+	Sessionid uuid.NullUUID
+	Userid    uuid.NullUUID
+	Role      sql.NullString
+	Content   string
+	Embedding interface{}
+	CreateAt  time.Time
+	UpdateAt  time.Time
+}
 
 type Profile struct {
 	ID        uuid.UUID
@@ -18,6 +30,14 @@ type Profile struct {
 	Userid    uuid.UUID
 	CreateAt  time.Time
 	UpdateAt  time.Time
+}
+
+type Session struct {
+	ID       uuid.UUID
+	Name     string
+	Userid   uuid.UUID
+	CreateAt time.Time
+	UpdateAt time.Time
 }
 
 type User struct {
