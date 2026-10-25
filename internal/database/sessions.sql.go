@@ -12,6 +12,19 @@ import (
 	"github.com/google/uuid"
 )
 
+const countSessionsByUserID = `-- name: CountSessionsByUserID :one
+SELECT COUNT(*)
+FROM sessions
+WHERE userId = $1
+`
+
+func (q *Queries) CountSessionsByUserID(ctx context.Context, userid uuid.UUID) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSessionsByUserID, userid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (name, userId, update_at)
 VALUES ($1, $2, $3)
@@ -84,10 +97,17 @@ SELECT id, name, userId, create_at, update_at
 FROM sessions
 WHERE userId = $1
 ORDER BY update_at DESC, create_at DESC
+LIMIT $2 OFFSET $3
 `
 
-func (q *Queries) ListSessionsByUserID(ctx context.Context, userid uuid.UUID) ([]Session, error) {
-	rows, err := q.db.QueryContext(ctx, listSessionsByUserID, userid)
+type ListSessionsByUserIDParams struct {
+	Userid uuid.UUID
+	Limit  int32
+	Offset int32
+}
+
+func (q *Queries) ListSessionsByUserID(ctx context.Context, arg ListSessionsByUserIDParams) ([]Session, error) {
+	rows, err := q.db.QueryContext(ctx, listSessionsByUserID, arg.Userid, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}

@@ -32,8 +32,12 @@ func (r *Repository) CreateSession(ctx context.Context, userID uuid.UUID, name s
 	return session, nil
 }
 
-func (r *Repository) ListSessionsByUserID(ctx context.Context, userID uuid.UUID) ([]database.Session, error) {
-	sessions, err := r.db.ListSessionsByUserID(ctx, userID)
+func (r *Repository) ListSessionsByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]database.Session, error) {
+	sessions, err := r.db.ListSessionsByUserID(ctx, database.ListSessionsByUserIDParams{
+		Userid: userID,
+		Limit:  int32(limit),
+		Offset: int32(offset),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: db ListSessionsByUserID: %v", ErrInternal, err)
 	}
@@ -43,6 +47,15 @@ func (r *Repository) ListSessionsByUserID(ctx context.Context, userID uuid.UUID)
 	}
 
 	return sessions, nil
+}
+
+func (r *Repository) CountSessionsByUserID(ctx context.Context, userID uuid.UUID) (int, error) {
+	total, err := r.db.CountSessionsByUserID(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("%w: db CountSessionsByUserID: %v", ErrInternal, err)
+	}
+
+	return int(total), nil
 }
 
 func (r *Repository) GetSessionByID(ctx context.Context, sessionID, userID uuid.UUID) (database.Session, error) {

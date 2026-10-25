@@ -20,6 +20,13 @@ type Service struct {
 	repo *Repository
 }
 
+const (
+	DefaultPage  = 1
+	DefaultLimit = 20
+	MaxPage      = 1_000_000
+	MaxLimit     = 100
+)
+
 func NewService(repo *Repository) *Service {
 	return &Service{repo: repo}
 }
@@ -33,13 +40,30 @@ func (s *Service) CreateSession(ctx context.Context, userIDStr, name string) (da
 	return s.repo.CreateSession(ctx, userID, name)
 }
 
-func (s *Service) ListSessions(ctx context.Context, userIDStr string) ([]database.Session, error) {
+func (s *Service) ListSessions(ctx context.Context, userIDStr string, page, limit int) (ListResult, error) {
 	userID, err := parseUUID(userIDStr, "user id")
 	if err != nil {
-		return nil, err
+		return ListResult{}, err
 	}
 
-	return s.repo.ListSessionsByUserID(ctx, userID)
+	if page < 1 || page > MaxPage {
+		return ListResult{}, fmt.Errorf("%w: page must be between 1 and %d", ErrInvalidInput, MaxPage)
+	}
+	if limit < 1 || limit > MaxLimit {
+		return ListResult{}, fmt.Errorf("%w: limit must be between 1 and %d", ErrInvalidInput, MaxLimit)
+	}
+
+	total, err := s.repo.CountSessionsByUserID(ctx, userID)
+	if err != nil {
+		return ListResult{}, err
+	}
+
+	sessions, err := s.repo.ListSessionsByUserID(ctx, userID, limit, (page-1)*limit)
+	if err != nil {
+		return ListResult{}, err
+	}
+
+	return ListResult{Sessions: sessions, Total: total}, nil
 }
 
 func (s *Service) GetSession(ctx context.Context, userIDStr, sessionIDStr string) (database.Session, error) {

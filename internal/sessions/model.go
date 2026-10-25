@@ -1,5 +1,7 @@
 package sessions
 
+import "github.com/mdarkanurl/JanoLuck/internal/database"
+
 type CreateSessionRequest struct {
 	Name string `json:"name" validate:"required,min=1,max=100"`
 }
@@ -20,6 +22,15 @@ type SessionResponse struct {
 type SessionListData struct {
 	UserID   string        `json:"userId"`
 	Sessions []SessionData `json:"sessions"`
+	Page     int           `json:"page"`
+	Limit    int           `json:"limit"`
+	Total    int           `json:"total"`
+	HasMore  bool          `json:"hasMore"`
+}
+
+type ListResult struct {
+	Sessions []database.Session
+	Total    int
 }
 
 type SessionListResponse struct {

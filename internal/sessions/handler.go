@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -110,6 +111,32 @@ func decodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	return v, true
 }
 
+func parsePagination(w http.ResponseWriter, r *http.Request) (int, int, bool) {
+	q := r.URL.Query()
+
+	page := DefaultPage
+	if raw := strings.TrimSpace(q.Get("page")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ErrorResponse{Error: "page must be an integer"})
+			return 0, 0, false
+		}
+		page = v
+	}
+
+	limit := DefaultLimit
+	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ErrorResponse{Error: "limit must be an integer"})
+			return 0, 0, false
+		}
+		limit = v
+	}
+
+	return page, limit, true
+}
+
 func sessionIDFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
 	sessionID := strings.TrimSpace(chi.URLParam(r, "sessionID"))
 	if sessionID == "" {
@@ -171,20 +198,25 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
+	page, limit, ok := parsePagination(w, r)
+	if !ok {
+		return
+	}
+
 	userID, _, ok := auth.UserIDFromContext(r.Context())
 	if !ok || userID == "" {
 		writeError(w, http.StatusUnauthorized, "invalid or expired token")
 		return
 	}
 
-	result, err := h.service.ListSessions(r.Context(), userID)
+	result, err := h.service.ListSessions(r.Context(), userID, page, limit)
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
 
-	sessions := make([]SessionData, 0, len(result))
-	for _, s := range result {
+	sessions := make([]SessionData, 0, len(result.Sessions))
+	for _, s := range result.Sessions {
 		sessions = append(sessions, toSessionData(s))
 	}
 
@@ -193,6 +225,10 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		Data: SessionListData{
 			UserID:   userID,
 			Sessions: sessions,
+			Page:     page,
+			Limit:    limit,
+			Total:    result.Total,
+			HasMore:  page*limit < result.Total,
 		},
 	})
 }
