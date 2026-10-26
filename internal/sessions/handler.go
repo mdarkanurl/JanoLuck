@@ -173,7 +173,7 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = strings.TrimSpace(req.Name)
+	req.Content = strings.TrimSpace(req.Content)
 
 	if !validateRequest(req, w) {
 		return
@@ -185,7 +185,7 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.service.CreateSession(r.Context(), userID, req.Name)
+	result, err := h.service.CreateSession(r.Context(), userID, req.Content)
 	if err != nil {
 		writeServiceError(w, err)
 		return

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	llm "github.com/mdarkanurl/JanoLuck/internal/LLM"
 	"github.com/mdarkanurl/JanoLuck/internal/auth"
 	"github.com/mdarkanurl/JanoLuck/internal/chats"
 	"github.com/mdarkanurl/JanoLuck/internal/config"
@@ -70,7 +71,8 @@ func New() *Server {
 	usersHandler := users.NewHandler(usersService)
 
 	sessionsRepo := sessions.NewRepository(dbQueries)
-	sessionsService := sessions.NewService(sessionsRepo)
+	sessionsLLM := llm.NewOpenRouterService(cfg.LLM_API_KEY, cfg.LLM_MODEL_NAME)
+	sessionsService := sessions.NewService(sessionsRepo, sessionsLLM)
 	sessionsHandler := sessions.NewHandler(sessionsService)
 
 	chatsRepo := chats.NewRepository(dbQueries)

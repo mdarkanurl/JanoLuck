@@ -3,7 +3,7 @@ package sessions
 import "github.com/mdarkanurl/JanoLuck/internal/database"
 
 type CreateSessionRequest struct {
-	Name string `json:"name" validate:"required,min=1,max=100"`
+	Content string `json:"name" validate:"required,min=1,max=100"`
 }
 
 type SessionData struct {

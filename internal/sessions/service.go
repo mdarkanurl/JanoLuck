@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	llm "github.com/mdarkanurl/JanoLuck/internal/LLM"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
 )
 
@@ -18,6 +19,7 @@ var (
 
 type Service struct {
 	repo *Repository
+	llm  *llm.LLM
 }
 
 const (
@@ -27,14 +29,20 @@ const (
 	MaxLimit     = 100
 )
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *Repository, llm *llm.LLM) *Service {
+	return &Service{repo: repo, llm: llm}
 }
 
-func (s *Service) CreateSession(ctx context.Context, userIDStr, name string) (database.Session, error) {
+func (s *Service) CreateSession(ctx context.Context, userIDStr, content string) (database.Session, error) {
 	userID, err := parseUUID(userIDStr, "user id")
 	if err != nil {
 		return database.Session{}, err
+	}
+
+	// Generate title for a session
+	name, err := s.llm.GenerateSessionName(content)
+	if err != nil {
+		return database.Session{}, ErrInternal
 	}
 
 	return s.repo.CreateSession(ctx, userID, name)
