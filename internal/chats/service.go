@@ -23,8 +23,8 @@ type Service struct {
 	llm  *llm.LLM
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *Repository, llm *llm.LLM) *Service {
+	return &Service{repo: repo, llm: llm}
 }
 
 func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr, role, content string) (Chat, error) {
@@ -48,16 +48,18 @@ func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr, role,
 		return Chat{}, err
 	}
 
-	isItFirstChat, err := s.isItFirstChat(ctx, sessionID)
-	if !isItFirstChat {
-		_, err := s.llm.GenerateSessionName(content)
-		if err != nil {
-			// handle the error
-		}
-
+	// Save the incoming message
+	if _, err := s.repo.CreateChat(ctx, sessionID, userID, role, content); err != nil {
+		return Chat{}, err
 	}
 
-	return s.repo.CreateChat(ctx, sessionID, userID, role, content)
+	// Generate prediction by LLM
+	prediction, err := s.llm.GeneratePrediction(content)
+	if err != nil {
+		return Chat{}, fmt.Errorf("%w: llm GeneratePrediction: %v", ErrInternal, err)
+	}
+
+	return s.repo.CreateChat(ctx, sessionID, userID, RoleSystem, prediction)
 }
 
 func (s *Service) ListChats(ctx context.Context, userIDStr, sessionIDStr string) ([]Chat, error) {

@@ -79,3 +79,47 @@ Generate the perfect session name now.`,
 
 	return "", fmt.Errorf("could not extract session name from response")
 }
+
+func (l *LLM) GeneratePrediction(content string) (string, error) {
+	ctx := context.Background()
+
+	client := openrouter.New(
+		openrouter.WithSecurity(l.apiKey),
+	)
+
+	res, err := client.Chat.Send(ctx, components.ChatRequest{
+		Model: openrouter.Pointer(l.model),
+		Messages: []components.ChatMessages{
+			components.CreateChatMessagesSystem(
+				components.ChatSystemMessage{
+					Role: components.ChatSystemMessageRoleSystem,
+					Content: components.CreateChatSystemMessageContentStr(
+						`You are a fortune teller. Generate a short, mystical prediction based on the user's message. Output only the prediction.`,
+					),
+				},
+			),
+			components.CreateChatMessagesUser(
+				components.ChatUserMessage{
+					Role:    components.ChatUserMessageRoleUser,
+					Content: components.CreateChatUserMessageContentStr(content),
+				},
+			),
+		},
+	}, nil)
+
+	if err != nil {
+		return "", fmt.Errorf("openrouter chat request failed: %w", err)
+	}
+
+	if res == nil || res.ChatResult == nil || len(res.ChatResult.Choices) == 0 {
+		return "", fmt.Errorf("empty response from openrouter")
+	}
+
+	msg := res.ChatResult.Choices[0].Message
+
+	if content, ok := msg.Content.Get(); ok && content.Str != nil {
+		return *content.Str, nil
+	}
+
+	return "", fmt.Errorf("could not extract prediction from response")
+}

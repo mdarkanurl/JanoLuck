@@ -76,7 +76,8 @@ func New() *Server {
 	sessionsHandler := sessions.NewHandler(sessionsService)
 
 	chatsRepo := chats.NewRepository(dbQueries)
-	chatsService := chats.NewService(chatsRepo)
+	chatsLLM := llm.NewOpenRouterService(cfg.LLM_API_KEY, cfg.LLM_MODEL_NAME)
+	chatsService := chats.NewService(chatsRepo, chatsLLM)
 	chatsHandler := chats.NewHandler(chatsService)
 
 	router := NewRouter(authHandler, tokenService, usersHandler, sessionsHandler, chatsHandler)
