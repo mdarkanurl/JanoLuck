@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mdarkanurl/JanoLuck/internal/auth"
+	"github.com/mdarkanurl/JanoLuck/internal/chats"
 	"github.com/mdarkanurl/JanoLuck/internal/config"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
 	"github.com/mdarkanurl/JanoLuck/internal/email"
@@ -72,7 +73,11 @@ func New() *Server {
 	sessionsService := sessions.NewService(sessionsRepo)
 	sessionsHandler := sessions.NewHandler(sessionsService)
 
-	router := NewRouter(authHandler, tokenService, usersHandler, sessionsHandler)
+	chatsRepo := chats.NewRepository(dbQueries)
+	chatsService := chats.NewService(chatsRepo)
+	chatsHandler := chats.NewHandler(chatsService)
+
+	router := NewRouter(authHandler, tokenService, usersHandler, sessionsHandler, chatsHandler)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.PORT,

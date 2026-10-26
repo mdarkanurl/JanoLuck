@@ -1,3 +1,5 @@
+github.com/OpenRouterTeam/go-sdk v0.9.75 h1:XIHrDSFGFuGDeaXnaXBoKcNUqmZ5ek5jzlyaK1oDBbE=
+github.com/OpenRouterTeam/go-sdk v0.9.75/go.mod h1:8vFtUZ9I2YiDntYbck42wQhrx9DsJN5PHbViaHwTkXc=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
 github.com/bsm/ginkgo/v2 v2.12.0/go.mod h1:SwYbGRRDovPVboqFv0tPTcG1sN61LM1Z4ARdbAV9g4c=
 github.com/bsm/gomega v1.27.10 h1:yeMWxP2pV2fG3FgAODIY8EiRE3dy0aeFYt4l7wh6yKA=
@@ -30,6 +32,8 @@ github.com/redis/go-redis/v9 v9.23.0 h1:/TTVdJa8BRNsybwwGGnmiYktHNlUXtbOQxlWpHBP
 github.com/redis/go-redis/v9 v9.23.0/go.mod h1:EWP2UUk+XDaI1s5nQB5mablZN6vccXlmBQTyfnF87D0=
 github.com/resend/resend-go/v4 v4.8.2 h1:L6XxAmHj8+o7TWs/nwMGysdoXy594qu4/42rFqkp7s8=
 github.com/resend/resend-go/v4 v4.8.2/go.mod h1:96jCV9Fb2HoQAnPOgGXURcbBZxCtLrul8e5iwKJ/E/g=
+github.com/spyzhov/ajson v0.8.0 h1:sFXyMbi4Y/BKjrsfkUZHSjA2JM1184enheSjjoT/zCc=
+github.com/spyzhov/ajson v0.8.0/go.mod h1:63V+CGM6f1Bu/p4nLIN8885ojBdt88TbLoSFzyqMuVA=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/zeebo/xxh3 v1.1.0 h1:s7DLGDK45Dyfg7++yxI0khrfwq9661w9EN78eP/UZVs=

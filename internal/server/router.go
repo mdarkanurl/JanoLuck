@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mdarkanurl/JanoLuck/internal/auth"
+	"github.com/mdarkanurl/JanoLuck/internal/chats"
 	"github.com/mdarkanurl/JanoLuck/internal/sessions"
 	"github.com/mdarkanurl/JanoLuck/internal/users"
 )
@@ -14,6 +15,7 @@ func NewRouter(
 	tokenService *auth.TokenService,
 	usersHandler *users.Handler,
 	sessionsHandler *sessions.Handler,
+	chatsHandler *chats.Handler,
 ) chi.Router {
 	r := chi.NewRouter()
 
@@ -48,6 +50,12 @@ func NewRouter(
 			r.Get("/sessions", sessionsHandler.ListSessions)
 			r.Get("/sessions/{sessionID}", sessionsHandler.GetSession)
 			r.Delete("/sessions/{sessionID}", sessionsHandler.DeleteSession)
+
+			r.Post("/sessions/{sessionID}/chats", chatsHandler.CreateChat)
+			r.Get("/sessions/{sessionID}/chats", chatsHandler.ListChats)
+			r.Get("/chats/{chatID}", chatsHandler.GetChat)
+			r.Patch("/chats/{chatID}", chatsHandler.UpdateChat)
+			r.Delete("/chats/{chatID}", chatsHandler.DeleteChat)
 		})
 	})
 

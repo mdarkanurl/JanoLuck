@@ -3,6 +3,7 @@ module github.com/mdarkanurl/JanoLuck
 go 1.27.0
 
 require (
+	github.com/OpenRouterTeam/go-sdk v0.9.75
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/google/uuid v1.6.0
@@ -19,6 +20,7 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
+	github.com/spyzhov/ajson v0.8.0 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
