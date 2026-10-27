@@ -149,7 +149,6 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Role = strings.TrimSpace(req.Role)
 	req.Content = strings.TrimSpace(req.Content)
 
 	if !validateRequest(req, w) {
@@ -167,7 +166,7 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.service.CreateChat(r.Context(), userID, sessionID, req.Role, req.Content)
+	result, err := h.service.CreateChat(r.Context(), userID, sessionID, req.Content)
 	if err != nil {
 		writeServiceError(w, err)
 		return

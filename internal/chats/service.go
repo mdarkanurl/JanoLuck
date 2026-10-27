@@ -27,7 +27,7 @@ func NewService(repo *Repository, llm *llm.LLM) *Service {
 	return &Service{repo: repo, llm: llm}
 }
 
-func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr, role, content string) (Chat, error) {
+func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr, content string) (Chat, error) {
 	userID, err := parseUUID(userIDStr, "user id")
 	if err != nil {
 		return Chat{}, err
@@ -38,18 +38,18 @@ func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr, role,
 		return Chat{}, err
 	}
 
-	normalizedRole, normalizedContent, err := normalizeMessage(role, content)
+	normalizedContent, err := normalizeMessage(content)
 	if err != nil {
 		return Chat{}, err
 	}
-	role, content = normalizedRole, normalizedContent
+	content = normalizedContent
 
 	if err := s.ensureSessionExists(ctx, sessionID, userID); err != nil {
 		return Chat{}, err
 	}
 
 	// Save the incoming message
-	if _, err := s.repo.CreateChat(ctx, sessionID, userID, role, content); err != nil {
+	if _, err := s.repo.CreateChat(ctx, sessionID, userID, RoleUser, content); err != nil {
 		return Chat{}, err
 	}
 
@@ -139,21 +139,16 @@ func (s *Service) isItFirstChat(ctx context.Context, sessionID uuid.UUID) (bool,
 	return exists, nil
 }
 
-func normalizeMessage(role, content string) (string, string, error) {
-	role = strings.ToLower(strings.TrimSpace(role))
+func normalizeMessage(content string) (string, error) {
 	content = strings.TrimSpace(content)
-
-	if role != RoleUser && role != RoleSystem {
-		return "", "", fmt.Errorf("%w: role must be 'user' or 'system'", ErrInvalidInput)
-	}
 	if content == "" {
-		return "", "", fmt.Errorf("%w: content is required", ErrInvalidInput)
+		return "", fmt.Errorf("%w: content is required", ErrInvalidInput)
 	}
 	if len(content) > 8000 {
-		return "", "", fmt.Errorf("%w: content must be at most 8000 characters", ErrInvalidInput)
+		return "", fmt.Errorf("%w: content must be at most 8000 characters", ErrInvalidInput)
 	}
 
-	return role, content, nil
+	return content, nil
 }
 
 func parseIDs(userIDStr, chatIDStr, field string) (uuid.UUID, uuid.UUID, error) {

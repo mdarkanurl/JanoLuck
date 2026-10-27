@@ -22,7 +22,6 @@ type Chat struct {
 }
 
 type CreateChatRequest struct {
-	Role    string `json:"role"    validate:"required,oneof=user system"`
 	Content string `json:"content" validate:"required,min=1,max=8000"`
 }
 
