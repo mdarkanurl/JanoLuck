@@ -13,6 +13,24 @@ import (
 	"github.com/google/uuid"
 )
 
+const countChatsBySessionID = `-- name: CountChatsBySessionID :one
+SELECT COUNT(*)
+FROM chats
+WHERE sessionId = $1 AND userId = $2
+`
+
+type CountChatsBySessionIDParams struct {
+	Sessionid uuid.NullUUID
+	Userid    uuid.NullUUID
+}
+
+func (q *Queries) CountChatsBySessionID(ctx context.Context, arg CountChatsBySessionIDParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countChatsBySessionID, arg.Sessionid, arg.Userid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createChat = `-- name: CreateChat :one
 INSERT INTO chats (sessionId, userId, role, content)
 VALUES ($1, $2, $3, $4)
@@ -114,12 +132,12 @@ const isItFirstChat = `-- name: IsItFirstChat :one
 SELECT EXISTS(
     SELECT 1
     FROM chats
-    WHERE id = $1
+    WHERE sessionId = $1
 )
 `
 
-func (q *Queries) IsItFirstChat(ctx context.Context, id uuid.UUID) (bool, error) {
-	row := q.db.QueryRowContext(ctx, isItFirstChat, id)
+func (q *Queries) IsItFirstChat(ctx context.Context, sessionid uuid.NullUUID) (bool, error) {
+	row := q.db.QueryRowContext(ctx, isItFirstChat, sessionid)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -129,12 +147,15 @@ const listChatsBySessionID = `-- name: ListChatsBySessionID :many
 SELECT id, sessionId, userId, role, content, create_at, update_at
 FROM chats
 WHERE sessionId = $1 AND userId = $2
-ORDER BY create_at ASC, id ASC
+ORDER BY create_at DESC, id DESC
+LIMIT $3 OFFSET $4
 `
 
 type ListChatsBySessionIDParams struct {
 	Sessionid uuid.NullUUID
 	Userid    uuid.NullUUID
+	Limit     int32
+	Offset    int32
 }
 
 type ListChatsBySessionIDRow struct {
@@ -148,7 +169,12 @@ type ListChatsBySessionIDRow struct {
 }
 
 func (q *Queries) ListChatsBySessionID(ctx context.Context, arg ListChatsBySessionIDParams) ([]ListChatsBySessionIDRow, error) {
-	rows, err := q.db.QueryContext(ctx, listChatsBySessionID, arg.Sessionid, arg.Userid)
+	rows, err := q.db.QueryContext(ctx, listChatsBySessionID,
+		arg.Sessionid,
+		arg.Userid,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}

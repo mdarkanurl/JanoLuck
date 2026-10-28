@@ -48,6 +48,15 @@ type ChatListData struct {
 	SessionID string     `json:"sessionId"`
 	UserID    string     `json:"userId"`
 	Chats     []ChatData `json:"chats"`
+	Page      int        `json:"page"`
+	Limit     int        `json:"limit"`
+	Total     int        `json:"total"`
+	HasMore   bool       `json:"hasMore"`
+}
+
+type ListResult struct {
+	Chats []Chat
+	Total int
 }
 
 type ChatListResponse struct {

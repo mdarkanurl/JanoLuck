@@ -23,6 +23,13 @@ type Service struct {
 	llm  *llm.LLM
 }
 
+const (
+	DefaultPage  = 1
+	DefaultLimit = 20
+	MaxPage      = 1_000_000
+	MaxLimit     = 100
+)
+
 func NewService(repo *Repository, llm *llm.LLM) *Service {
 	return &Service{repo: repo, llm: llm}
 }
@@ -62,22 +69,39 @@ func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr, conte
 	return s.repo.CreateChat(ctx, sessionID, userID, RoleSystem, prediction)
 }
 
-func (s *Service) ListChats(ctx context.Context, userIDStr, sessionIDStr string) ([]Chat, error) {
+func (s *Service) ListChats(ctx context.Context, userIDStr, sessionIDStr string, page, limit int) (ListResult, error) {
 	userID, err := parseUUID(userIDStr, "user id")
 	if err != nil {
-		return nil, err
+		return ListResult{}, err
 	}
 
 	sessionID, err := parseUUID(sessionIDStr, "session id")
 	if err != nil {
-		return nil, err
+		return ListResult{}, err
 	}
 
 	if err := s.ensureSessionExists(ctx, sessionID, userID); err != nil {
-		return nil, err
+		return ListResult{}, err
 	}
 
-	return s.repo.ListChatsBySessionID(ctx, sessionID, userID)
+	if page < 1 || page > MaxPage {
+		return ListResult{}, fmt.Errorf("%w: page must be between 1 and %d", ErrInvalidInput, MaxPage)
+	}
+	if limit < 1 || limit > MaxLimit {
+		return ListResult{}, fmt.Errorf("%w: limit must be between 1 and %d", ErrInvalidInput, MaxLimit)
+	}
+
+	total, err := s.repo.CountChatsBySessionID(ctx, sessionID, userID)
+	if err != nil {
+		return ListResult{}, err
+	}
+
+	chats, err := s.repo.ListChatsBySessionID(ctx, sessionID, userID, limit, (page-1)*limit)
+	if err != nil {
+		return ListResult{}, err
+	}
+
+	return ListResult{Chats: chats, Total: total}, nil
 }
 
 func (s *Service) GetChat(ctx context.Context, userIDStr, chatIDStr string) (Chat, error) {
@@ -125,18 +149,6 @@ func (s *Service) ensureSessionExists(ctx context.Context, sessionID, userID uui
 	}
 
 	return nil
-}
-
-func (s *Service) isItFirstChat(ctx context.Context, sessionID uuid.UUID) (bool, error) {
-	exists, err := s.repo.IsItFirstChat(ctx, sessionID)
-	if err != nil {
-		return false, err
-	}
-	if !exists {
-		return false, ErrNotFirstChat
-	}
-
-	return exists, nil
 }
 
 func normalizeMessage(content string) (string, error) {

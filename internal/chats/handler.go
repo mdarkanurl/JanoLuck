@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -178,7 +179,38 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func parsePagination(w http.ResponseWriter, r *http.Request) (int, int, bool) {
+	q := r.URL.Query()
+
+	page := DefaultPage
+	if raw := strings.TrimSpace(q.Get("page")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ErrorResponse{Error: "page must be an integer"})
+			return 0, 0, false
+		}
+		page = v
+	}
+
+	limit := DefaultLimit
+	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ErrorResponse{Error: "limit must be an integer"})
+			return 0, 0, false
+		}
+		limit = v
+	}
+
+	return page, limit, true
+}
+
 func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
+	page, limit, ok := parsePagination(w, r)
+	if !ok {
+		return
+	}
+
 	sessionID, ok := pathParam(w, r, "sessionID")
 	if !ok {
 		return
@@ -190,14 +222,14 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.service.ListChats(r.Context(), userID, sessionID)
+	result, err := h.service.ListChats(r.Context(), userID, sessionID, page, limit)
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
 
-	chatItems := make([]ChatData, 0, len(result))
-	for _, c := range result {
+	chatItems := make([]ChatData, 0, len(result.Chats))
+	for _, c := range result.Chats {
 		chatItems = append(chatItems, toChatData(c))
 	}
 
@@ -207,6 +239,10 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
 			SessionID: sessionID,
 			UserID:    userID,
 			Chats:     chatItems,
+			Page:      page,
+			Limit:     limit,
+			Total:     result.Total,
+			HasMore:   page*limit < result.Total,
 		},
 	})
 }

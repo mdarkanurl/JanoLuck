@@ -31,15 +31,6 @@ func (r *Repository) SessionExistsByUserID(ctx context.Context, sessionID, userI
 	return exists, nil
 }
 
-func (r *Repository) IsItFirstChat(ctx context.Context, sessionID uuid.UUID) (bool, error) {
-	exists, err := r.db.IsItFirstChat(ctx, sessionID)
-	if err != nil {
-		return false, fmt.Errorf("%w: db IsItFirstChat: %v", ErrInternal, err)
-	}
-
-	return exists, nil
-}
-
 func (r *Repository) CreateChat(ctx context.Context, sessionID, userID uuid.UUID, role, content string) (Chat, error) {
 	row, err := r.db.CreateChat(ctx, database.CreateChatParams{
 		Sessionid: uuid.NullUUID{UUID: sessionID, Valid: true},
@@ -54,10 +45,12 @@ func (r *Repository) CreateChat(ctx context.Context, sessionID, userID uuid.UUID
 	return newChat(row.ID, row.Sessionid, row.Userid, row.Role, row.Content, row.CreateAt, row.UpdateAt), nil
 }
 
-func (r *Repository) ListChatsBySessionID(ctx context.Context, sessionID, userID uuid.UUID) ([]Chat, error) {
+func (r *Repository) ListChatsBySessionID(ctx context.Context, sessionID, userID uuid.UUID, limit, offset int) ([]Chat, error) {
 	rows, err := r.db.ListChatsBySessionID(ctx, database.ListChatsBySessionIDParams{
 		Sessionid: uuid.NullUUID{UUID: sessionID, Valid: true},
 		Userid:    uuid.NullUUID{UUID: userID, Valid: true},
+		Limit:     int32(limit),
+		Offset:    int32(offset),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: db ListChatsBySessionID: %v", ErrInternal, err)
@@ -69,6 +62,18 @@ func (r *Repository) ListChatsBySessionID(ctx context.Context, sessionID, userID
 	}
 
 	return chats, nil
+}
+
+func (r *Repository) CountChatsBySessionID(ctx context.Context, sessionID, userID uuid.UUID) (int, error) {
+	total, err := r.db.CountChatsBySessionID(ctx, database.CountChatsBySessionIDParams{
+		Sessionid: uuid.NullUUID{UUID: sessionID, Valid: true},
+		Userid:    uuid.NullUUID{UUID: userID, Valid: true},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("%w: db CountChatsBySessionID: %v", ErrInternal, err)
+	}
+
+	return int(total), nil
 }
 
 func (r *Repository) GetChatByID(ctx context.Context, chatID, userID uuid.UUID) (Chat, error) {

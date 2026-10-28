@@ -21,7 +21,13 @@ SELECT EXISTS(
 SELECT id, sessionId, userId, role, content, create_at, update_at
 FROM chats
 WHERE sessionId = $1 AND userId = $2
-ORDER BY create_at ASC, id ASC;
+ORDER BY create_at DESC, id DESC
+LIMIT $3 OFFSET $4;
+
+-- name: CountChatsBySessionID :one
+SELECT COUNT(*)
+FROM chats
+WHERE sessionId = $1 AND userId = $2;
 
 -- name: GetChatByID :one
 SELECT id, sessionId, userId, role, content, create_at, update_at
