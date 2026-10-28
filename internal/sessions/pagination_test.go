@@ -46,7 +46,7 @@ func TestParsePaginationRejectsNonIntegers(t *testing.T) {
 }
 
 func TestListSessionsValidatesRange(t *testing.T) {
-	svc := NewService(nil) // range rules fail before any repo call
+	svc := NewService(nil, nil) // range rules fail before any repo call
 	userID := "a4e20000-0000-4000-8000-000000000000"
 	ctx := context.Background()
 
