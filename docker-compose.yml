@@ -1,0 +1,37 @@
+services:
+   postgres:
+      image: postgres:18
+      container_name: JanoLuck_Database
+      environment:
+         POSTGRES_USER: myuser
+         POSTGRES_PASSWORD: mysecretpassword
+         POSTGRES_DB: janoluck
+      ports:
+         - "5432:5432"
+      volumes:
+         - postgres_data:/var/lib/postgresql
+      restart: unless-stopped
+      healthcheck:
+         test: ["CMD-SHELL", "pg_isready -U myuser -d janoluck"]
+         interval: 10s
+         timeout: 5s
+         retries: 5
+
+   redis:
+      image: redis/redis-stack:latest
+      container_name: JanoLuck_redis-stack
+      ports:
+         - "6379:6379"
+         - "8001:8001"
+      volumes:
+         - redis_data:/data
+      restart: unless-stopped
+      healthcheck:
+         test: ["CMD", "redis-cli", "ping"]
+         interval: 10s
+         timeout: 5s
+         retries: 5
+
+volumes:
+   postgres_data:
+   redis_data:
