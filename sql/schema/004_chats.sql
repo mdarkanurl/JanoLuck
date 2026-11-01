@@ -12,11 +12,11 @@ CREATE TABLE chats (
     create_at   TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     update_at   TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
 
-    CONSTRAINT fk_chats_users 
+    CONSTRAINT fk_chats_users
         FOREIGN KEY (userId) REFERENCES users(id)
         ON DELETE CASCADE,
 
-    CONSTRAINT fk_chats_sessions 
+    CONSTRAINT fk_chats_sessions
         FOREIGN KEY (sessionId) REFERENCES sessions(id)
         ON DELETE CASCADE
 );

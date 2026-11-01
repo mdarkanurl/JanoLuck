@@ -55,8 +55,15 @@ func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr, conte
 		return Chat{}, err
 	}
 
+	// Generate embedding for the message
+	embedding, err := s.llm.GenerateEmbedding(content)
+	if err != nil {
+		return Chat{}, fmt.Errorf("%w: llm GenerateEmbedding: %v", ErrInternal, err)
+	}
+
 	// Save the incoming message
-	if _, err := s.repo.CreateChat(ctx, sessionID, userID, RoleUser, content); err != nil {
+	if _, err := s.repo.CreateChat(ctx, sessionID, userID, RoleUser, content, vectorString(embedding)); err != nil {
+		fmt.Println(err)
 		return Chat{}, err
 	}
 
@@ -66,7 +73,29 @@ func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr, conte
 		return Chat{}, fmt.Errorf("%w: llm GeneratePrediction: %v", ErrInternal, err)
 	}
 
-	return s.repo.CreateChat(ctx, sessionID, userID, RoleSystem, prediction)
+	// Generate embedding for the prediction
+	predictionEmbedding, err := s.llm.GenerateEmbedding(prediction)
+	if err != nil {
+		return Chat{}, fmt.Errorf("%w: llm GenerateEmbedding: %v", ErrInternal, err)
+	}
+
+	return s.repo.CreateChat(ctx, sessionID, userID, RoleSystem, prediction, vectorString(predictionEmbedding))
+}
+
+func vectorString(v []float64) string {
+	if len(v) == 0 {
+		return "[]"
+	}
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i, f := range v {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(fmt.Sprintf("%g", f))
+	}
+	sb.WriteString("]")
+	return sb.String()
 }
 
 func (s *Service) ListChats(ctx context.Context, userIDStr, sessionIDStr string, page, limit int) (ListResult, error) {

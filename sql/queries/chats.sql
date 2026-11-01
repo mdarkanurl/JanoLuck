@@ -1,6 +1,6 @@
 -- name: CreateChat :one
-INSERT INTO chats (sessionId, userId, role, content)
-VALUES ($1, $2, $3, $4)
+INSERT INTO chats (sessionId, userId, role, content, embedding)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING id, sessionId, userId, role, content, create_at, update_at;
 
 -- name: SessionExistsByUserID :one

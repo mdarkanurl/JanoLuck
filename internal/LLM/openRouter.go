@@ -6,12 +6,14 @@ import (
 
 	openrouter "github.com/OpenRouterTeam/go-sdk"
 	"github.com/OpenRouterTeam/go-sdk/models/components"
+	"github.com/OpenRouterTeam/go-sdk/models/operations"
 )
 
-func NewOpenRouterService(apiKey, modelName string) *LLM {
+func NewOpenRouterService(apiKey, modelName, embedModelName string) *LLM {
 	return &LLM{
-		apiKey: apiKey,
-		model:  modelName,
+		apiKey:     apiKey,
+		model:      modelName,
+		embedModel: embedModelName,
 	}
 }
 
@@ -122,4 +124,49 @@ func (l *LLM) GeneratePrediction(content string) (string, error) {
 	}
 
 	return "", fmt.Errorf("could not extract prediction from response")
+}
+
+func (l *LLM) GenerateEmbedding(content string) ([]float64, error) {
+	ctx := context.Background()
+
+	client := openrouter.New(
+		openrouter.WithSecurity(l.apiKey),
+	)
+
+	dimensions := int64(1536)
+	res, err := client.Embeddings.Generate(ctx, operations.CreateEmbeddingsRequest{
+		Model:      l.embedModel,
+		Input:      operations.CreateInputUnionStr(content),
+		Dimensions: &dimensions,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openrouter embeddings request failed: %w", err)
+	}
+
+	if res == nil {
+		return nil, fmt.Errorf("empty response from openrouter")
+	}
+
+	switch res.Type {
+	case operations.CreateEmbeddingsResponseTypeCreateEmbeddingsResponseBody:
+		if res.CreateEmbeddingsResponseBody == nil {
+			return nil, fmt.Errorf("empty embeddings response body")
+		}
+		data := res.CreateEmbeddingsResponseBody.Data
+		if len(data) == 0 {
+			return nil, fmt.Errorf("empty embeddings data")
+		}
+		emb := data[0].Embedding
+		if emb.ArrayOfNumber != nil {
+			return emb.ArrayOfNumber, nil
+		}
+		if emb.Str != nil && *emb.Str != "" {
+			return nil, fmt.Errorf("base64 embeddings not supported")
+		}
+		return nil, fmt.Errorf("could not extract embedding from response")
+	case operations.CreateEmbeddingsResponseTypeStr:
+		return nil, fmt.Errorf("unexpected string response from embeddings endpoint")
+	}
+
+	return nil, fmt.Errorf("could not extract embedding from response")
 }

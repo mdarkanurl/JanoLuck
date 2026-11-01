@@ -31,12 +31,13 @@ func (r *Repository) SessionExistsByUserID(ctx context.Context, sessionID, userI
 	return exists, nil
 }
 
-func (r *Repository) CreateChat(ctx context.Context, sessionID, userID uuid.UUID, role, content string) (Chat, error) {
+func (r *Repository) CreateChat(ctx context.Context, sessionID, userID uuid.UUID, role, content string, embedding interface{}) (Chat, error) {
 	row, err := r.db.CreateChat(ctx, database.CreateChatParams{
 		Sessionid: uuid.NullUUID{UUID: sessionID, Valid: true},
 		Userid:    uuid.NullUUID{UUID: userID, Valid: true},
 		Role:      sql.NullString{String: role, Valid: true},
 		Content:   content,
+		Embedding: embedding,
 	})
 	if err != nil {
 		return Chat{}, fmt.Errorf("%w: db CreateChat: %v", ErrInternal, err)

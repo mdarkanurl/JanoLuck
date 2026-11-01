@@ -71,12 +71,12 @@ func New() *Server {
 	usersHandler := users.NewHandler(usersService)
 
 	sessionsRepo := sessions.NewRepository(dbQueries)
-	sessionsLLM := llm.NewOpenRouterService(cfg.LLM_API_KEY, cfg.LLM_MODEL_NAME)
+	sessionsLLM := llm.NewOpenRouterService(cfg.LLM_API_KEY, cfg.LLM_MODEL_NAME, cfg.LLM_EMBED_MODEL_NAME)
 	sessionsService := sessions.NewService(sessionsRepo, sessionsLLM)
 	sessionsHandler := sessions.NewHandler(sessionsService)
 
 	chatsRepo := chats.NewRepository(dbQueries)
-	chatsLLM := llm.NewOpenRouterService(cfg.LLM_API_KEY, cfg.LLM_MODEL_NAME)
+	chatsLLM := llm.NewOpenRouterService(cfg.LLM_API_KEY, cfg.LLM_MODEL_NAME, cfg.LLM_EMBED_MODEL_NAME)
 	chatsService := chats.NewService(chatsRepo, chatsLLM)
 	chatsHandler := chats.NewHandler(chatsService)
 

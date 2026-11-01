@@ -18,6 +18,7 @@ type Config struct {
 	REFRESH_TOKEN_TTL_DAYS   string
 	LLM_API_KEY              string
 	LLM_MODEL_NAME           string
+	LLM_EMBED_MODEL_NAME     string
 }
 
 func getEnv(key, fallback string) string {
@@ -49,5 +50,6 @@ func Load() Config {
 		REFRESH_TOKEN_TTL_DAYS:   getEnv("REFRESH_TOKEN_TTL_DAYS", "30"),
 		LLM_API_KEY:              getEnv("LLM_API_KEY", ""),
 		LLM_MODEL_NAME:           getEnv("LLM_MODEL_NAME", ""),
+		LLM_EMBED_MODEL_NAME:     getEnv("LLM_EMBED_MODEL_NAME", ""),
 	}
 }
