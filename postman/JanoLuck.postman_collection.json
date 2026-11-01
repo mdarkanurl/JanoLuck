@@ -1,0 +1,633 @@
+{
+  "info": {
+    "_postman_id": "d9f1c4a2-7f3b-4b8a-9c2e-1a6d5e8f0b21",
+    "name": "JanoLuck API",
+    "description": "Simple collection for every route exposed by the JanoLuck Go server.\n\nOnly one environment variable is used: `bash_url`.\n\nEmail and password are hardcoded. After Login or Verify email, copy the access token into the collection Authorization setting (currently `PASTE_ACCESS_TOKEN_HERE`). Replace `PASTE_SESSION_ID_HERE` in the session/chat URLs with a real session UUID.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "PASTE_ACCESS_TOKEN_HERE",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bash_url}}/health",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "GET /health\n\nReturns plain text: OK!"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Sign up",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"mdarkanurl@gmail.com\",\n  \"password\": \"arkan1020\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bash_url}}/api/v1/auth/signup",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "signup"
+              ]
+            },
+            "description": "POST /api/v1/auth/signup\n\nCreates an account and emails a 6-digit verification code."
+          },
+          "response": []
+        },
+        {
+          "name": "Verify email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"mdarkanurl@gmail.com\",\n  \"code\": 123456\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bash_url}}/api/v1/auth/verify-email",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "verify-email"
+              ]
+            },
+            "description": "POST /api/v1/auth/verify-email\n\nReplace `123456` with the code from the email. Returns access and refresh tokens."
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"mdarkanurl@gmail.com\",\n  \"password\": \"arkan1020\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bash_url}}/api/v1/auth/login",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "POST /api/v1/auth/login\n\nReturns access and refresh tokens."
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh tokens",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"PASTE_REFRESH_TOKEN_HERE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bash_url}}/api/v1/auth/refresh",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "POST /api/v1/auth/refresh\n\nReplace `PASTE_REFRESH_TOKEN_HERE` with the refresh token from Login."
+          },
+          "response": []
+        },
+        {
+          "name": "Forgot password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"mdarkanurl@gmail.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bash_url}}/api/v1/auth/forgot-password",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "forgot-password"
+              ]
+            },
+            "description": "POST /api/v1/auth/forgot-password\n\nEmails a password reset code."
+          },
+          "response": []
+        },
+        {
+          "name": "Reset password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"mdarkanurl@gmail.com\",\n  \"code\": 123456,\n  \"newPassword\": \"arkan1020\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bash_url}}/api/v1/auth/reset-password",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "reset-password"
+              ]
+            },
+            "description": "POST /api/v1/auth/reset-password\n\nReplace `123456` with the reset code from the email."
+          },
+          "response": []
+        },
+        {
+          "name": "Get current user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bash_url}}/api/v1/auth/me",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "GET /api/v1/auth/me\n\nReturns the authenticated user's id and email."
+          },
+          "response": []
+        },
+        {
+          "name": "Change password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"arkan1020\",\n  \"newPassword\": \"arkan1021\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bash_url}}/api/v1/auth/change-password",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "change-password"
+              ]
+            },
+            "description": "POST /api/v1/auth/change-password\n\nThe server requires the new password to differ from the current one, so this example uses `arkan1021`."
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{bash_url}}/api/v1/auth/logout",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "POST /api/v1/auth/logout\n\nRevokes the current tokens."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Profiles",
+      "item": [
+        {
+          "name": "Create profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ada Lovelace\",\n  \"qOne\": \"I am from Istanbul.\",\n  \"qTwo\": \"I am a software engineer.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bash_url}}/api/v1/profiles",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles"
+              ]
+            },
+            "description": "POST /api/v1/profiles\n\nCreates the authenticated user's profile."
+          },
+          "response": []
+        },
+        {
+          "name": "Profile exists",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bash_url}}/api/v1/profiles/exists",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles",
+                "exists"
+              ]
+            },
+            "description": "GET /api/v1/profiles/exists\n\nChecks whether the authenticated user has a profile."
+          },
+          "response": []
+        },
+        {
+          "name": "Get profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bash_url}}/api/v1/profiles",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles"
+              ]
+            },
+            "description": "GET /api/v1/profiles\n\nReturns the authenticated user's profile."
+          },
+          "response": []
+        },
+        {
+          "name": "Update profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ada Lovelace Updated\",\n  \"questions\": [\n    {\n      \"index\": 0,\n      \"answer\": \"I am from Izmir.\"\n    },\n    {\n      \"index\": 1,\n      \"answer\": \"I build backend services.\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bash_url}}/api/v1/profiles",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles"
+              ]
+            },
+            "description": "PUT /api/v1/profiles\n\nUpdates the profile name and/or question answers."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Sessions",
+      "item": [
+        {
+          "name": "Create session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Plan a weekend trip\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bash_url}}/api/v1/sessions",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions"
+              ]
+            },
+            "description": "POST /api/v1/sessions\n\nCreates a session. The name is generated by the LLM from this content."
+          },
+          "response": []
+        },
+        {
+          "name": "List sessions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bash_url}}/api/v1/sessions?page=1&limit=20",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "GET /api/v1/sessions\n\nLists the authenticated user's sessions."
+          },
+          "response": []
+        },
+        {
+          "name": "Get session",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bash_url}}/api/v1/sessions/PASTE_SESSION_ID_HERE",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "PASTE_SESSION_ID_HERE"
+              ]
+            },
+            "description": "GET /api/v1/sessions/{sessionID}\n\nReplace `PASTE_SESSION_ID_HERE` with a session UUID."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete session",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{bash_url}}/api/v1/sessions/PASTE_SESSION_ID_HERE",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "PASTE_SESSION_ID_HERE"
+              ]
+            },
+            "description": "DELETE /api/v1/sessions/{sessionID}\n\nReplace `PASTE_SESSION_ID_HERE` with a session UUID."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Chats",
+      "item": [
+        {
+          "name": "Create chat",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Suggest three budget-friendly weekend trips from Istanbul.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{bash_url}}/api/v1/sessions/PASTE_SESSION_ID_HERE/chats",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "PASTE_SESSION_ID_HERE",
+                "chats"
+              ]
+            },
+            "description": "POST /api/v1/sessions/{sessionID}/chats\n\nReplace `PASTE_SESSION_ID_HERE` with a session UUID. Sends a message and returns the assistant reply."
+          },
+          "response": []
+        },
+        {
+          "name": "List chats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bash_url}}/api/v1/sessions/PASTE_SESSION_ID_HERE/chats?page=1&limit=20",
+              "host": [
+                "{{bash_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "PASTE_SESSION_ID_HERE",
+                "chats"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "GET /api/v1/sessions/{sessionID}/chats\n\nReplace `PASTE_SESSION_ID_HERE` with a session UUID."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
