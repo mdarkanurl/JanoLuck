@@ -53,9 +53,6 @@ func NewRouter(
 
 			r.Post("/sessions/{sessionID}/chats", chatsHandler.CreateChat)
 			r.Get("/sessions/{sessionID}/chats", chatsHandler.ListChats)
-			r.Get("/chats/{chatID}", chatsHandler.GetChat)
-			r.Patch("/chats/{chatID}", chatsHandler.UpdateChat)
-			r.Delete("/chats/{chatID}", chatsHandler.DeleteChat)
 		})
 	})
 
