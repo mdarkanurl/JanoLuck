@@ -206,6 +206,51 @@ func (q *Queries) ListChatsBySessionID(ctx context.Context, arg ListChatsBySessi
 	return items, nil
 }
 
+const listSimilarChatsBySessionID = `-- name: ListSimilarChatsBySessionID :many
+SELECT content
+FROM chats
+WHERE sessionId = $1
+  AND id <> $2
+  AND embedding IS NOT NULL
+ORDER BY embedding <=> $3::text::vector
+LIMIT $4
+`
+
+type ListSimilarChatsBySessionIDParams struct {
+	Sessionid     uuid.NullUUID
+	Excludechatid uuid.UUID
+	Embedding     string
+	Rowlimit      int32
+}
+
+func (q *Queries) ListSimilarChatsBySessionID(ctx context.Context, arg ListSimilarChatsBySessionIDParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listSimilarChatsBySessionID,
+		arg.Sessionid,
+		arg.Excludechatid,
+		arg.Embedding,
+		arg.Rowlimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			return nil, err
+		}
+		items = append(items, content)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const sessionExistsByUserID = `-- name: SessionExistsByUserID :one
 SELECT EXISTS (
     SELECT 1

@@ -65,6 +65,20 @@ func (r *Repository) ListChatsBySessionID(ctx context.Context, sessionID, userID
 	return chats, nil
 }
 
+func (r *Repository) ListSimilarChatsBySessionID(ctx context.Context, sessionID, excludeChatID uuid.UUID, embedding string, limit int) ([]string, error) {
+	chats, err := r.db.ListSimilarChatsBySessionID(ctx, database.ListSimilarChatsBySessionIDParams{
+		Sessionid:     uuid.NullUUID{UUID: sessionID, Valid: true},
+		Excludechatid: excludeChatID,
+		Embedding:     embedding,
+		Rowlimit:      int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: db ListSimilarChatsBySessionID: %v", ErrInternal, err)
+	}
+
+	return chats, nil
+}
+
 func (r *Repository) CountChatsBySessionID(ctx context.Context, sessionID, userID uuid.UUID) (int, error) {
 	total, err := r.db.CountChatsBySessionID(ctx, database.CountChatsBySessionIDParams{
 		Sessionid: uuid.NullUUID{UUID: sessionID, Valid: true},

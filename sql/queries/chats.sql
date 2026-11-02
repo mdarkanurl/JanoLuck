@@ -24,6 +24,15 @@ WHERE sessionId = $1 AND userId = $2
 ORDER BY create_at DESC, id DESC
 LIMIT $3 OFFSET $4;
 
+-- name: ListSimilarChatsBySessionID :many
+SELECT content
+FROM chats
+WHERE sessionId = sqlc.arg(sessionID)
+  AND id <> sqlc.arg(excludeChatID)
+  AND embedding IS NOT NULL
+ORDER BY embedding <=> sqlc.arg(embedding)::text::vector
+LIMIT sqlc.arg(rowLimit);
+
 -- name: CountChatsBySessionID :one
 SELECT COUNT(*)
 FROM chats

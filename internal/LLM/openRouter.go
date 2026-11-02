@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	openrouter "github.com/OpenRouterTeam/go-sdk"
 	"github.com/OpenRouterTeam/go-sdk/models/components"
@@ -82,12 +83,22 @@ Generate the perfect session name now.`,
 	return "", fmt.Errorf("could not extract session name from response")
 }
 
-func (l *LLM) GeneratePrediction(content string) (string, error) {
+func (l *LLM) GeneratePrediction(content string, previousChats []string) (string, error) {
 	ctx := context.Background()
 
 	client := openrouter.New(
 		openrouter.WithSecurity(l.apiKey),
 	)
+
+	systemPrompt := `You are a fortune teller. Generate a short, mystical prediction based on the user's message. Output only the prediction.`
+
+	if previousContext := formatPreviousChats(previousChats); previousContext != "" {
+		systemPrompt += `
+
+Here are the user's previous messages and predictions, ordered from most to least relevant. Use them as context to keep your prediction consistent and personal, but do not repeat them verbatim:
+
+` + previousContext
+	}
 
 	res, err := client.Chat.Send(ctx, components.ChatRequest{
 		Model: openrouter.Pointer(l.model),
@@ -96,7 +107,7 @@ func (l *LLM) GeneratePrediction(content string) (string, error) {
 				components.ChatSystemMessage{
 					Role: components.ChatSystemMessageRoleSystem,
 					Content: components.CreateChatSystemMessageContentStr(
-						`You are a fortune teller. Generate a short, mystical prediction based on the user's message. Output only the prediction.`,
+						systemPrompt,
 					),
 				},
 			),
@@ -124,6 +135,21 @@ func (l *LLM) GeneratePrediction(content string) (string, error) {
 	}
 
 	return "", fmt.Errorf("could not extract prediction from response")
+}
+
+func formatPreviousChats(previousChats []string) string {
+	var sb strings.Builder
+	for _, chat := range previousChats {
+		chat = strings.TrimSpace(chat)
+		if chat == "" {
+			continue
+		}
+		sb.WriteString("- ")
+		sb.WriteString(chat)
+		sb.WriteString("\n")
+	}
+
+	return strings.TrimSpace(sb.String())
 }
 
 func (l *LLM) GenerateEmbedding(content string) ([]float64, error) {

@@ -28,6 +28,8 @@ const (
 	DefaultLimit = 20
 	MaxPage      = 1_000_000
 	MaxLimit     = 100
+
+	similarChatsLimit = 10
 )
 
 func NewService(repo *Repository, llm *llm.LLM) *Service {
@@ -62,13 +64,18 @@ func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr, conte
 	}
 
 	// Save the incoming message
-	if _, err := s.repo.CreateChat(ctx, sessionID, userID, RoleUser, content, vectorString(embedding)); err != nil {
-		fmt.Println(err)
+	currentChat, err := s.repo.CreateChat(ctx, sessionID, userID, RoleUser, content, vectorString(embedding))
+	if err != nil {
+		return Chat{}, err
+	}
+
+	previousChats, err := s.repo.ListSimilarChatsBySessionID(ctx, sessionID, currentChat.ID, vectorString(embedding), similarChatsLimit)
+	if err != nil {
 		return Chat{}, err
 	}
 
 	// Generate prediction by LLM
-	prediction, err := s.llm.GeneratePrediction(content)
+	prediction, err := s.llm.GeneratePrediction(content, previousChats)
 	if err != nil {
 		return Chat{}, fmt.Errorf("%w: llm GeneratePrediction: %v", ErrInternal, err)
 	}
