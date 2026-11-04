@@ -6,6 +6,8 @@ import (
 	"github.com/resend/resend-go/v4"
 )
 
+var newResendClient = resend.NewClient
+
 func NewResendService(apiKey string) *Email {
 	return &Email{
 		resnedAPIKey: apiKey,
@@ -17,7 +19,7 @@ func (r *Email) Send(
 	subject string,
 	body string,
 ) error {
-	client := resend.NewClient(r.resnedAPIKey)
+	client := newResendClient(r.resnedAPIKey)
 
 	params := &resend.SendEmailRequest{
 		From:    "JunoLuck <JunoLuck@resend.dev>",

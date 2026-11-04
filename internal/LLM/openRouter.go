@@ -10,6 +10,10 @@ import (
 	"github.com/OpenRouterTeam/go-sdk/models/operations"
 )
 
+var newOpenRouterClient = func(apiKey string) *openrouter.OpenRouter {
+	return openrouter.New(openrouter.WithSecurity(apiKey))
+}
+
 func NewOpenRouterService(apiKey, modelName, embedModelName string) *LLM {
 	return &LLM{
 		apiKey:     apiKey,
@@ -21,9 +25,7 @@ func NewOpenRouterService(apiKey, modelName, embedModelName string) *LLM {
 func (l *LLM) GenerateSessionName(content string) (string, error) {
 	ctx := context.Background()
 
-	client := openrouter.New(
-		openrouter.WithSecurity(l.apiKey),
-	)
+	client := newOpenRouterClient(l.apiKey)
 
 	res, err := client.Chat.Send(ctx, components.ChatRequest{
 		Model: openrouter.Pointer(l.model),
@@ -86,9 +88,7 @@ Generate the perfect session name now.`,
 func (l *LLM) GeneratePrediction(content string, previousChats []string) (string, error) {
 	ctx := context.Background()
 
-	client := openrouter.New(
-		openrouter.WithSecurity(l.apiKey),
-	)
+	client := newOpenRouterClient(l.apiKey)
 
 	systemPrompt := `You are a fortune teller. Generate a short, mystical prediction based on the user's message. Output only the prediction.`
 
@@ -155,9 +155,7 @@ func formatPreviousChats(previousChats []string) string {
 func (l *LLM) GenerateEmbedding(content string) ([]float64, error) {
 	ctx := context.Background()
 
-	client := openrouter.New(
-		openrouter.WithSecurity(l.apiKey),
-	)
+	client := newOpenRouterClient(l.apiKey)
 
 	dimensions := int64(1536)
 	res, err := client.Embeddings.Generate(ctx, operations.CreateEmbeddingsRequest{
