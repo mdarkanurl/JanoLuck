@@ -9,22 +9,37 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-)
-
-type chatFocus int
-
-const (
-	focusInput chatFocus = iota
-	focusSessions
 )
 
 type chatConfirm struct {
 	action    string
 	sessionID string
 	name      string
+}
+
+type sessionPicker struct {
+	filter  textinput.Model
+	index   int
+	loading bool
+	err     string
+}
+
+type commandSuggestion struct {
+	name        string
+	description string
+}
+
+var commandSuggestions = []commandSuggestion{
+	{"/sessions", "browse previous conversations"},
+	{"/new", "start a new conversation"},
+	{"/profile", "edit your profile"},
+	{"/logout", "log out"},
+	{"/help", "show commands and shortcuts"},
+	{"/quit", "quit JanoLuck"},
 }
 
 type chatModel struct {
@@ -36,13 +51,8 @@ type chatModel struct {
 	current  *sessionData
 	chats    []chatData
 
-	width        int
-	height       int
-	sidebarWidth int
-	mainWidth    int
-
-	focus    chatFocus
-	selected int
+	width  int
+	height int
 
 	loading     bool
 	loadingText string
@@ -53,7 +63,11 @@ type chatModel struct {
 	input    textarea.Model
 	spinner  spinner.Model
 
+	suggestIndex     int
+	suggestDismissed bool
+
 	confirm *chatConfirm
+	picker  *sessionPicker
 }
 
 type sessionsLoadedMsg struct {
@@ -80,12 +94,6 @@ type chatSentMsg struct {
 	err        error
 }
 
-type refreshResultMsg struct {
-	sessions []sessionData
-	chats    []chatData
-	err      error
-}
-
 type sessionDeletedMsg struct {
 	id  string
 	err error
@@ -96,8 +104,6 @@ func newChatModel(
 	me meData,
 	profile *profileData,
 	sessions []sessionData,
-	current *sessionData,
-	chats []chatData,
 	width, height int,
 ) chatModel {
 	input := textarea.New()
@@ -105,6 +111,14 @@ func newChatModel(
 	input.CharLimit = 8000
 	input.ShowLineNumbers = false
 	input.Prompt = "› "
+	input.MaxHeight = 5
+
+	input.FocusedStyle.Prompt = accentStyle
+	input.FocusedStyle.Placeholder = mutedStyle
+	input.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	input.FocusedStyle.EndOfBuffer = mutedStyle
+	input.FocusedStyle.Text = lipgloss.NewStyle().Foreground(colorText)
+	input.BlurredStyle = input.FocusedStyle
 
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
@@ -115,25 +129,15 @@ func newChatModel(
 		me:       me,
 		profile:  profile,
 		sessions: sessions,
-		current:  current,
-		chats:    chronological(chats),
+		chats:    nil,
 		viewport: viewport.New(10, 5),
 		input:    input,
 		spinner:  spin,
 	}
 	model.viewport.MouseWheelEnabled = true
 	model.input.Focus()
-	model.focus = focusInput
-
-	if current != nil {
-		model.selected = model.indexOfSession(current.ID)
-	}
-	if model.selected < 0 {
-		model.selected = 0
-	}
 
 	model.setSize(width, height)
-	model.renderMessages()
 
 	return model
 }
@@ -150,51 +154,97 @@ func (m *chatModel) setSize(width, height int) {
 		return
 	}
 
-	m.sidebarWidth = 0
-	if width >= 82 {
-		m.sidebarWidth = min(32, max(26, width/4))
+	m.input.SetWidth(max(12, m.contentWidth()-4))
+	m.syncInputHeight()
+	m.resizeViewport()
+
+	if m.picker != nil {
+		m.picker.filter.Width = max(10, m.pickerInnerWidth()-3)
 	}
-
-	m.mainWidth = width
-	if m.sidebarWidth > 0 {
-		m.mainWidth = width - m.sidebarWidth - 1
-	}
-
-	bodyHeight := max(10, height-1)
-	chatHeight := max(3, bodyHeight-2-1-5)
-
-	m.viewport.Width = max(10, m.mainWidth-2)
-	m.viewport.Height = chatHeight
-
-	m.input.SetWidth(max(10, m.mainWidth-6))
-	m.input.SetHeight(3)
 
 	m.renderMessages()
+}
+
+// contentWidth is the width of the chat column (composer, messages, header).
+func (m chatModel) contentWidth() int {
+	return max(20, min(88, m.width-4))
+}
+
+func (m chatModel) pickerWidth() int {
+	return max(38, min(78, m.width-6))
+}
+
+func (m chatModel) pickerInnerWidth() int {
+	return m.pickerWidth() - 6
+}
+
+func (m *chatModel) syncInputHeight() {
+	lines := strings.Count(m.input.Value(), "\n") + 1
+	if lines > 5 {
+		lines = 5
+	}
+	if lines < 1 {
+		lines = 1
+	}
+	m.input.SetHeight(lines)
+}
+
+func (m *chatModel) resizeViewport() {
+	composerHeight := m.input.Height() + 2
+	suggestionHeight := len(m.commandSuggestions())
+	height := m.height - 2 - 1 - composerHeight - suggestionHeight
+	if height < 3 {
+		height = 3
+	}
+
+	m.viewport.Width = max(10, m.contentWidth())
+	m.viewport.Height = height
 }
 
 func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
-		if !m.loading {
+		if !m.loading && (m.picker == nil || !m.picker.loading) {
 			return m, nil
 		}
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
+		if m.loading && m.picker == nil && m.confirm == nil {
+			m.repaintStream()
+		}
+		return m, cmd
+
+	case tea.MouseMsg:
+		if m.picker != nil || m.confirm != nil || m.current == nil {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
 
 	case tea.KeyMsg:
-		return m.handleKey(msg)
+		switch {
+		case m.confirm != nil:
+			return m.handleConfirmKey(msg)
+		case m.picker != nil:
+			return m.handlePickerKey(msg)
+		default:
+			return m.handleKey(msg)
+		}
 
 	case sessionOpenedMsg:
 		m.loading = false
 		if msg.err != nil {
 			m.err = inline(msg.err.Error())
+			m.repaintStream()
+			if errors.Is(msg.err, errSessionExpired) || errors.Is(msg.err, errNotLoggedIn) {
+				return m, func() tea.Msg { return sessionExpiredMsg{err: msg.err} }
+			}
 			return m, nil
 		}
 
 		m.current = &msg.session
 		m.chats = chronological(msg.chats)
-		m.selected = max(0, m.indexOfSession(msg.session.ID))
 		m.err = ""
 		m.toast = ""
 		_ = m.client.setSession(msg.session.ID)
@@ -217,7 +267,6 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 
 		m.current = &msg.session
 		m.sessions = m.upsertSession(msg.session)
-		m.selected = max(0, m.indexOfSession(msg.session.ID))
 		_ = m.client.setSession(msg.session.ID)
 		m.loadingText = "Jano is thinking..."
 		m.renderMessages()
@@ -235,9 +284,6 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 		if msg.sessions != nil {
 			m.sessions = msg.sessions
-		}
-		if m.current != nil {
-			m.selected = max(0, m.indexOfSession(m.current.ID))
 		}
 
 		if msg.err != nil {
@@ -259,23 +305,6 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		m.renderMessages()
 		return m, nil
 
-	case refreshResultMsg:
-		m.loading = false
-		if msg.err != nil {
-			m.err = inline(msg.err.Error())
-			return m, nil
-		}
-
-		m.sessions = msg.sessions
-		if m.current != nil {
-			m.chats = chronological(msg.chats)
-			m.selected = max(0, m.indexOfSession(m.current.ID))
-		}
-		m.err = ""
-		m.toast = "Refreshed."
-		m.renderMessages()
-		return m, nil
-
 	case sessionDeletedMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -288,70 +317,65 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.current = nil
 			m.chats = nil
 			_ = m.client.setSession("")
-			m.renderMessages()
 		}
-		if m.selected >= len(m.sessions) {
-			m.selected = max(0, len(m.sessions)-1)
-		}
+		m.repaintStream()
+		m.clampPicker()
 		m.toast = "Conversation deleted."
 		return m, nil
 
 	case sessionsLoadedMsg:
+		if m.picker != nil {
+			m.picker.loading = false
+		}
 		if msg.err != nil {
-			m.err = inline(msg.err.Error())
+			if m.picker != nil {
+				m.picker.err = inline(msg.err.Error())
+			} else {
+				m.err = inline(msg.err.Error())
+			}
 			return m, nil
 		}
+
 		m.sessions = msg.sessions
-		if m.selected >= len(m.sessions) {
-			m.selected = max(0, len(m.sessions)-1)
+		if m.picker != nil {
+			m.picker.err = ""
+			m.clampPicker()
 		}
 		return m, nil
 	}
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.syncInputHeight()
+	m.resizeViewport()
 	return m, cmd
 }
 
 func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
-	if m.confirm != nil {
-		switch msg.String() {
-		case "y", "Y", "enter":
-			return m.runConfirm()
-		case "n", "N", "esc":
-			m.confirm = nil
-			return m, nil
-		}
-		return m, nil
-	}
-
 	m.toast = ""
 
-	switch msg.String() {
-	case "ctrl+n":
-		return m.newConversation()
-	case "ctrl+r":
-		return m.refresh()
-	case "ctrl+l":
-		m.confirm = &chatConfirm{action: "logout"}
-		return m, nil
-	case "tab":
-		if m.sidebarWidth == 0 {
+	options := m.commandSuggestions()
+	if len(options) > 0 {
+		switch msg.String() {
+		case "up", "ctrl+p":
+			m.suggestIndex = (m.suggestIndex - 1 + len(options)) % len(options)
+			return m, nil
+		case "down", "ctrl+n":
+			m.suggestIndex = (m.suggestIndex + 1) % len(options)
+			return m, nil
+		case "tab":
+			index := min(max(m.suggestIndex, 0), len(options)-1)
+			m.input.SetValue(options[index].name + " ")
+			m.input.CursorEnd()
+			m.suggestIndex = 0
+			m.syncInputHeight()
+			m.resizeViewport()
+			return m, nil
+		case "esc":
+			m.suggestDismissed = true
+			m.resizeViewport()
 			return m, nil
 		}
-		if m.focus == focusInput {
-			m.focusSessions()
-		} else {
-			m.focusInput()
-		}
-		return m, nil
-	case "esc":
-		m.focusInput()
-		return m, nil
-	}
-
-	if m.focus == focusSessions {
-		return m.handleSidebarKey(msg)
 	}
 
 	switch msg.String() {
@@ -359,45 +383,181 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 		return m.submit()
 	case "ctrl+j":
 		m.input.InsertString("\n")
+		m.syncInputHeight()
+		m.resizeViewport()
 		return m, nil
+	case "pgup":
+		m.viewport.PageUp()
+		return m, nil
+	case "pgdown":
+		m.viewport.PageDown()
+		return m, nil
+	case "shift+up":
+		m.viewport.ScrollUp(3)
+		return m, nil
+	case "shift+down":
+		m.viewport.ScrollDown(3)
+		return m, nil
+	case "ctrl+u":
+		m.viewport.HalfViewUp()
+		return m, nil
+	case "ctrl+d":
+		if m.current != nil {
+			m.viewport.HalfViewDown()
+			return m, nil
+		}
+	case "up":
+		if m.current != nil && !strings.Contains(m.input.Value(), "\n") {
+			m.viewport.ScrollUp(1)
+			return m, nil
+		}
+	case "down":
+		if m.current != nil && !strings.Contains(m.input.Value(), "\n") {
+			m.viewport.ScrollDown(1)
+			return m, nil
+		}
 	}
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.suggestDismissed = false
+	m.suggestIndex = 0
+	m.syncInputHeight()
+	m.resizeViewport()
 	return m, cmd
 }
 
-func (m chatModel) handleSidebarKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
+func (m chatModel) handleConfirmKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 	switch msg.String() {
-	case "up", "k":
-		if m.selected > 0 {
-			m.selected--
+	case "y", "Y", "enter":
+		return m.runConfirm()
+	case "n", "N", "esc":
+		m.confirm = nil
+		if m.picker == nil {
+			m.focusInput()
 		}
 		return m, nil
-	case "down", "j":
-		if m.selected < len(m.sessions)-1 {
-			m.selected++
-		}
-		return m, nil
-	case "enter":
-		return m.openSelected()
-	case "n":
-		return m.newConversation()
-	case "d":
-		if len(m.sessions) == 0 {
-			return m, nil
-		}
-		session := m.sessions[m.selected]
-		m.confirm = &chatConfirm{
-			action:    "delete",
-			sessionID: session.ID,
-			name:      session.Name,
-		}
-		return m, nil
-	case "r":
-		return m.refresh()
 	}
 	return m, nil
+}
+
+func (m chatModel) handlePickerKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.picker = nil
+		m.focusInput()
+		return m, nil
+	case "up", "ctrl+p":
+		m.movePicker(-1)
+		return m, nil
+	case "down", "ctrl+n":
+		m.movePicker(1)
+		return m, nil
+	case "enter":
+		return m.openPickerSelection()
+	case "ctrl+d":
+		return m.confirmDeleteSelection()
+	}
+
+	var cmd tea.Cmd
+	m.picker.filter, cmd = m.picker.filter.Update(msg)
+	m.picker.index = 0
+	return m, cmd
+}
+
+func (m *chatModel) movePicker(delta int) {
+	if m.picker == nil {
+		return
+	}
+
+	total := len(m.pickerMatches())
+	if total == 0 {
+		m.picker.index = 0
+		return
+	}
+
+	m.picker.index = (m.picker.index + delta + total) % total
+}
+
+func (m *chatModel) clampPicker() {
+	if m.picker == nil {
+		return
+	}
+
+	total := len(m.pickerMatches())
+	if total == 0 {
+		m.picker.index = 0
+		return
+	}
+	if m.picker.index >= total {
+		m.picker.index = total - 1
+	}
+	if m.picker.index < 0 {
+		m.picker.index = 0
+	}
+}
+
+func (m chatModel) pickerMatches() []sessionData {
+	if m.picker == nil {
+		return m.sessions
+	}
+	return filterSessions(m.sessions, m.picker.filter.Value())
+}
+
+func filterSessions(sessions []sessionData, query string) []sessionData {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return sessions
+	}
+
+	matches := make([]sessionData, 0, len(sessions))
+	for _, session := range sessions {
+		if strings.Contains(strings.ToLower(session.Name), query) {
+			matches = append(matches, session)
+		}
+	}
+	return matches
+}
+
+// commandSuggestions returns slash commands that match the composer's current
+// prefix. Suggestions are hidden once the command is complete or has arguments.
+func (m chatModel) commandSuggestions() []commandSuggestion {
+	if m.suggestDismissed || m.loading {
+		return nil
+	}
+
+	value := m.input.Value()
+	if value == "" || !strings.HasPrefix(value, "/") || strings.ContainsAny(value, " \t\n") {
+		return nil
+	}
+
+	prefix := strings.ToLower(value)
+	matches := make([]commandSuggestion, 0, len(commandSuggestions))
+	for _, suggestion := range commandSuggestions {
+		if strings.HasPrefix(suggestion.name, prefix) && suggestion.name != prefix {
+			matches = append(matches, suggestion)
+		}
+	}
+	return matches
+}
+
+func matchingCommands(value string) []commandSuggestion {
+	value = strings.ToLower(strings.TrimSpace(value))
+	matches := make([]commandSuggestion, 0, len(commandSuggestions))
+	for _, suggestion := range commandSuggestions {
+		if strings.HasPrefix(suggestion.name, value) {
+			matches = append(matches, suggestion)
+		}
+	}
+	return matches
+}
+
+func knownCommand(value string) bool {
+	switch value {
+	case "/session", "/sessions", "/new", "/profile", "/logout", "/help", "/quit", "/exit":
+		return true
+	}
+	return false
 }
 
 func (m chatModel) submit() (chatModel, tea.Cmd) {
@@ -410,8 +570,13 @@ func (m chatModel) submit() (chatModel, tea.Cmd) {
 		return m, nil
 	}
 
+	if strings.HasPrefix(value, "/") {
+		return m.runCommand(value)
+	}
+
 	m.input.Reset()
-	m.input.Focus()
+	m.syncInputHeight()
+	m.resizeViewport()
 	m.err = ""
 	m.toast = ""
 	m.loading = true
@@ -432,18 +597,109 @@ func (m chatModel) submit() (chatModel, tea.Cmd) {
 	return m, tea.Batch(sendChatCmd(m.client, *m.current, value), m.spinner.Tick)
 }
 
-func (m chatModel) openSelected() (chatModel, tea.Cmd) {
-	if m.loading || len(m.sessions) == 0 {
+func parseCommand(value string) (command, args string) {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return "", ""
+	}
+	return strings.ToLower(fields[0]), strings.Join(fields[1:], " ")
+}
+
+func (m chatModel) runCommand(value string) (chatModel, tea.Cmd) {
+	command, args := parseCommand(value)
+
+	// Let enter accept an unambiguous partial command, so "/ses" works too.
+	if !knownCommand(command) {
+		if matches := matchingCommands(command); len(matches) == 1 {
+			command = matches[0].name
+		}
+	}
+
+	switch command {
+	case "/session", "/sessions":
+		m.input.Reset()
+		m.syncInputHeight()
+		m.resizeViewport()
+		return m.openPicker(args)
+	case "/new":
+		m.input.Reset()
+		m.syncInputHeight()
+		m.resizeViewport()
+		return m.newConversation()
+	case "/profile":
+		m.input.Reset()
+		m.syncInputHeight()
+		return m, func() tea.Msg { return openProfileMsg{} }
+	case "/logout":
+		m.input.Reset()
+		m.syncInputHeight()
+		m.confirm = &chatConfirm{action: "logout"}
+		return m, nil
+	case "/help":
+		m.input.Reset()
+		m.syncInputHeight()
+		return m, func() tea.Msg { return openHelpMsg{} }
+	case "/quit", "/exit":
+		return m, tea.Quit
+	}
+
+	m.err = "Unknown command " + command + ". Type /help for the list."
+	return m, nil
+}
+
+func (m chatModel) openPicker(query string) (chatModel, tea.Cmd) {
+	filter := textinput.New()
+	filter.Placeholder = "Filter conversations..."
+	filter.Prompt = "› "
+	filter.CharLimit = 120
+	filter.Width = max(10, m.pickerInnerWidth()-3)
+	filter.PromptStyle = accentStyle
+	filter.TextStyle = lipgloss.NewStyle().Foreground(colorText)
+	filter.PlaceholderStyle = mutedStyle
+
+	if query != "" {
+		filter.SetValue(query)
+		filter.CursorEnd()
+	}
+	filter.Focus()
+
+	m.picker = &sessionPicker{filter: filter, loading: true}
+	m.err = ""
+	m.toast = ""
+	m.input.Blur()
+
+	return m, tea.Batch(listSessionsCmd(m.client), m.spinner.Tick)
+}
+
+func (m chatModel) openPickerSelection() (chatModel, tea.Cmd) {
+	matches := m.pickerMatches()
+	if len(matches) == 0 || m.picker == nil || m.picker.index >= len(matches) {
 		return m, nil
 	}
 
-	session := m.sessions[m.selected]
+	session := matches[m.picker.index]
+	m.picker = nil
 	m.loading = true
 	m.loadingText = "Loading conversation..."
 	m.err = ""
 	m.toast = ""
 
 	return m, tea.Batch(loadSessionCmd(m.client, session.ID), m.spinner.Tick)
+}
+
+func (m chatModel) confirmDeleteSelection() (chatModel, tea.Cmd) {
+	matches := m.pickerMatches()
+	if len(matches) == 0 || m.picker == nil || m.picker.index >= len(matches) {
+		return m, nil
+	}
+
+	session := matches[m.picker.index]
+	m.confirm = &chatConfirm{
+		action:    "delete",
+		sessionID: session.ID,
+		name:      session.Name,
+	}
+	return m, nil
 }
 
 func (m chatModel) newConversation() (chatModel, tea.Cmd) {
@@ -463,18 +719,6 @@ func (m chatModel) newConversation() (chatModel, tea.Cmd) {
 	return m, nil
 }
 
-func (m chatModel) refresh() (chatModel, tea.Cmd) {
-	if m.loading {
-		return m, nil
-	}
-
-	m.loading = true
-	m.loadingText = "Refreshing..."
-	m.err = ""
-
-	return m, tea.Batch(refreshSessionsCmd(m.client, m.current), m.spinner.Tick)
-}
-
 func (m chatModel) runConfirm() (chatModel, tea.Cmd) {
 	confirm := m.confirm
 	m.confirm = nil
@@ -486,10 +730,12 @@ func (m chatModel) runConfirm() (chatModel, tea.Cmd) {
 	case "delete":
 		m.loading = true
 		m.loadingText = "Deleting conversation..."
+		m.renderMessages()
 		return m, tea.Batch(deleteSessionCmd(m.client, confirm.sessionID), m.spinner.Tick)
 	case "logout":
 		m.loading = true
 		m.loadingText = "Logging out..."
+		m.renderMessages()
 		return m, tea.Batch(logoutCmd(m.client), m.spinner.Tick)
 	}
 
@@ -497,17 +743,18 @@ func (m chatModel) runConfirm() (chatModel, tea.Cmd) {
 }
 
 func (m *chatModel) focusInput() {
-	if m.sidebarWidth == 0 {
-		m.focus = focusInput
-	} else {
-		m.focus = focusInput
+	if m.picker != nil {
+		return
 	}
 	m.input.Focus()
 }
 
-func (m *chatModel) focusSessions() {
-	m.focus = focusSessions
-	m.input.Blur()
+// repaintStream rebuilds the message stream on a spinner tick so the in-stream
+// status indicator animates, while keeping the reader's scroll position.
+func (m *chatModel) repaintStream() {
+	offset := m.viewport.YOffset
+	m.renderMessages()
+	m.viewport.SetYOffset(offset)
 }
 
 func (m *chatModel) renderMessages() {
@@ -515,43 +762,45 @@ func (m *chatModel) renderMessages() {
 		return
 	}
 
-	width := max(18, m.mainWidth-2)
+	width := max(18, m.viewport.Width-4)
 
 	if len(m.chats) == 0 {
-		if m.current == nil {
-			m.viewport.SetContent(m.welcome(width))
-		} else {
-			m.viewport.SetContent(mutedStyle.Render(wrapText("This conversation is empty. Say hi below.", width-4)))
-		}
-		m.viewport.GotoBottom()
+		m.viewport.SetContent("")
 		return
 	}
 
-	blocks := make([]string, 0, len(m.chats))
+	blocks := make([]string, 0, len(m.chats)+1)
 	for _, chat := range m.chats {
 		blocks = append(blocks, m.renderChat(chat, width))
+	}
+	if m.loading {
+		blocks = append(blocks, m.statusBlock(width))
+	}
+
+	if len(blocks) == 0 {
+		m.viewport.SetContent("")
+		return
 	}
 
 	m.viewport.SetContent(strings.Join(blocks, "\n\n"))
 	m.viewport.GotoBottom()
 }
 
-func (m chatModel) welcome(width int) string {
-	copy := "Ask me about your career, relationships, a decision you're stuck on, " +
-		"or whatever's on your mind. I'll give you a hopeful (and slightly goofy) " +
-		"guess about what happens next."
+// statusBlock renders the pending-work indicator in the message stream, in
+// the spot a system message would appear, instead of under the composer.
+func (m chatModel) statusBlock(width int) string {
+	text := m.loadingText
+	if text == "" {
+		text = "Working…"
+	}
 
-	body := logoStyle.Render("✦ Hey, I'm Jano.") + "\n\n" +
-		mutedStyle.Render(wrapText(copy, max(18, width-6))) + "\n\n" +
-		mutedStyle.Render("Type below and press enter. ctrl+j adds a newline.")
+	label := mutedStyle.Render("system")
+	body := m.spinner.View() + " " + mutedStyle.Render(wrapText(text, max(20, width-4)))
 
-	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorHairline).
-		Padding(1, 2).
-		Width(max(18, min(width-2, 76)-6))
-
-	return style.Render(body)
+	return lipgloss.NewStyle().
+		Width(width).
+		Align(lipgloss.Left).
+		Render(label + "\n\n" + body)
 }
 
 func (m chatModel) renderChat(chat chatData, width int) string {
@@ -562,205 +811,269 @@ func (m chatModel) renderChat(chat chatData, width int) string {
 
 	role := "jano"
 	roleStyle := primaryStyle
-	border := colorPrimary
+	align := lipgloss.Left
+	textWidth := max(20, width-2)
 
 	switch chat.Role {
 	case "user":
 		role = "you"
 		roleStyle = accentStyle
-		border = colorAccent
+		align = lipgloss.Right
+		textWidth = max(20, width*3/4)
 	case "error":
 		role = "error"
 		roleStyle = dangerStyle
-		border = colorDanger
 	}
-
-	maxBubble := min(80, max(26, width*3/4))
-	content = wrapText(content, maxBubble-4)
-
-	bubble := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(border).
-		Padding(0, 1).
-		Render(content)
 
 	label := roleStyle.Render(role)
 	if clock := formatClock(chat.CreatedAt); clock != "" {
-		label += " " + mutedStyle.Render(clock)
+		label += "  " + mutedStyle.Render(clock)
 	}
 
-	align := lipgloss.Left
-	if chat.Role == "user" {
-		align = lipgloss.Right
-	}
+	body := lipgloss.NewStyle().
+		Foreground(colorText).
+		Render(wrapText(content, textWidth))
+
+	// Blank line between the name/date and the message body.
+	block := label + "\n\n" + body
 
 	return lipgloss.NewStyle().
 		Width(width).
 		Align(align).
-		Render(label + "\n" + bubble)
+		Render(block)
 }
 
 func (m chatModel) View() string {
 	if m.confirm != nil {
 		return m.confirmView()
 	}
+	if m.picker != nil {
+		return m.pickerView()
+	}
 	if m.width == 0 || m.height == 0 || m.client == nil {
 		return ""
 	}
 
-	bodyHeight := max(10, m.height-1)
-	status := m.statusView()
-
-	if m.sidebarWidth > 0 {
-		sidebar := m.sidebarView(bodyHeight)
-		main := m.mainView(bodyHeight)
-		return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, " ", main) + "\n" + status
+	if m.current == nil && len(m.chats) == 0 {
+		return m.homeView()
 	}
-
-	return m.mainView(bodyHeight) + "\n" + status
+	return m.conversationView()
 }
 
-func (m chatModel) mainView(height int) string {
-	header := m.headerView()
-	hint := m.hintView()
-	input := m.inputView()
+func (m chatModel) homeView() string {
+	width := m.contentWidth()
 
-	viewportHeight := height - 2 - 1 - 5
-	if viewportHeight < 3 {
-		viewportHeight = 3
-	}
-	if m.viewport.Height != viewportHeight {
-		m.viewport.Height = viewportHeight
-		m.renderMessages()
+	line := func(value string) string {
+		return lipgloss.NewStyle().
+			Width(width).
+			Align(lipgloss.Center).
+			Render(value)
 	}
 
 	parts := []string{
-		header,
+		line(logoStyle.Render("JanoLuck")),
+		line(mutedStyle.Render("your optimistic friend for what-ifs")),
+		"",
+	}
+	if suggestions := m.suggestionsView(); suggestions != "" {
+		parts = append(parts, suggestions)
+	}
+	parts = append(parts,
+		m.composerView(),
+		"",
+		line(m.hintView()),
+	)
+
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		strings.Join(parts, "\n"),
+	)
+}
+
+func (m chatModel) conversationView() string {
+	m.resizeViewport()
+
+	parts := []string{
+		m.headerView(),
 		m.viewport.View(),
-		hint,
-		input,
+	}
+	if suggestions := m.suggestionsView(); suggestions != "" {
+		parts = append(parts, suggestions)
+	}
+	parts = append(parts,
+		m.composerView(),
+		m.hintView(),
+	)
+
+	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, strings.Join(parts, "\n"))
+}
+
+func (m chatModel) suggestionsView() string {
+	options := m.commandSuggestions()
+	if len(options) == 0 {
+		return ""
 	}
 
-	return strings.Join(parts, "\n")
+	width := m.contentWidth()
+	index := min(max(m.suggestIndex, 0), len(options)-1)
+
+	rows := make([]string, 0, len(options))
+	for i, option := range options {
+		row := fmt.Sprintf(" %-13s%s", option.name, option.description)
+		if i == index {
+			rows = append(rows, selectedStyle.Width(width).Render(row))
+		} else {
+			rows = append(rows, accentStyle.Render(fmt.Sprintf(" %-13s", option.name))+
+				mutedStyle.Render(option.description))
+		}
+	}
+
+	return strings.Join(rows, "\n")
 }
 
 func (m chatModel) headerView() string {
-	left := logoStyle.Render("✦ JanoLuck")
+	width := m.contentWidth()
+
+	left := logoStyle.Render("JanoLuck")
 	if m.current != nil {
 		left += mutedStyle.Render("  /  ")
-		left += titleStyle.Render(truncate(m.current.Name, max(8, m.mainWidth/2)))
-	} else {
-		left += mutedStyle.Render("  /  new conversation")
+		left += titleStyle.Render(truncate(m.current.Name, max(8, width/2)))
 	}
 
 	right := mutedStyle.Render(fmt.Sprintf("%d messages", len(m.chats)))
-	line := spread(left, right, m.mainWidth)
+	line := spread(left, right, width)
 
-	return line + "\n" + hairlineStyle.Render(strings.Repeat("─", max(1, m.mainWidth)))
+	return line + "\n" + hairlineStyle.Render(strings.Repeat("─", max(1, width)))
 }
 
 func (m chatModel) hintView() string {
-	width := max(10, m.mainWidth-2)
+	width := m.contentWidth()
 
 	switch {
 	case m.err != "":
 		return dangerStyle.Render(truncate("! "+inline(m.err), width))
 	case m.loading:
-		return m.spinner.View() + " " + mutedStyle.Render(truncate(m.loadingText, width-4))
+		// The pending-work indicator lives in the message stream (statusBlock).
+		return ""
 	case m.toast != "":
 		return successStyle.Render(truncate(m.toast, width))
-	default:
-		hint := "enter send · ctrl+j newline · tab sessions · ctrl+h help"
-		if m.sidebarWidth == 0 {
-			hint = "enter send · ctrl+j newline · ctrl+h help"
-		}
-		return mutedStyle.Render(truncate(hint, width))
+	case len(m.commandSuggestions()) > 0:
+		return mutedStyle.Render(truncate("↑↓ choose · tab complete · esc dismiss", width))
 	}
+
+	hint := "enter send · /sessions history · /help commands"
+	if m.current != nil {
+		hint = "enter send · ctrl+j newline · /sessions history · /help"
+	}
+	return mutedStyle.Render(truncate(hint, width))
 }
 
-func (m chatModel) inputView() string {
-	border := colorMuted
-	if m.focus == focusInput {
-		border = colorPrimary
-	}
-
+func (m chatModel) composerView() string {
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(border).
+		BorderForeground(colorHairline).
 		Padding(0, 1).
-		Width(max(10, m.mainWidth-4))
+		Width(max(10, m.contentWidth()-2))
 
 	return style.Render(m.input.View())
 }
 
-func (m chatModel) sidebarView(height int) string {
-	innerWidth := max(10, m.sidebarWidth-4)
-	contentHeight := max(6, height-2)
-	listHeight := max(1, contentHeight-4)
+func (m chatModel) pickerView() string {
+	if m.picker == nil {
+		return ""
+	}
 
-	title := mutedStyle.Render("SESSIONS")
+	inner := m.pickerInnerWidth()
+
+	title := titleStyle.Render("Conversations")
 	if len(m.sessions) > 0 {
-		title += " " + mutedStyle.Render(fmt.Sprintf("%d", len(m.sessions)))
+		title += "  " + mutedStyle.Render(fmt.Sprintf("%d", len(m.sessions)))
 	}
 
-	var listLines []string
-	if len(m.sessions) == 0 {
-		listLines = []string{mutedStyle.Render("No conversations yet."), mutedStyle.Render("ctrl+n starts one.")}
-	} else {
-		offset := 0
-		if m.selected >= listHeight {
-			offset = m.selected - listHeight + 1
-		}
-		end := min(len(m.sessions), offset+listHeight)
+	footer := "type to filter · ↑↓ move · enter open · ctrl+d delete · esc close"
 
-		for i := offset; i < end; i++ {
-			listLines = append(listLines, m.sessionLine(i, innerWidth))
-		}
+	lines := []string{title}
+	if status := m.pickerStatus(inner); status != "" {
+		lines = append(lines, status)
 	}
-	for len(listLines) < listHeight {
-		listLines = append(listLines, "")
-	}
-
-	footer := mutedStyle.Render("tab composer · n new")
-	if m.focus == focusSessions {
-		footer = mutedStyle.Render("n new · d delete · r refresh")
-	}
-	if lipgloss.Width(footer) > innerWidth {
-		footer = mutedStyle.Render(truncate("n new · d delete", innerWidth))
-	}
-
-	content := strings.Join([]string{
-		title,
+	lines = append(lines,
+		m.picker.filter.View(),
+		hairlineStyle.Render(strings.Repeat("─", max(1, inner))),
+		m.pickerListView(inner),
 		"",
-		strings.Join(listLines, "\n"),
-		footer,
-	}, "\n")
+		mutedStyle.Render(truncate(footer, inner)),
+	)
 
-	border := colorMuted
-	if m.focus == focusSessions {
-		border = colorPrimary
-	}
+	content := strings.Join(lines, "\n")
 
-	style := lipgloss.NewStyle().
+	panel := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(border).
-		Padding(0, 1).
-		Width(max(12, m.sidebarWidth-4)).
-		Height(max(4, height-2))
+		BorderForeground(colorPrimary).
+		Padding(1, 2).
+		Width(inner + 4).
+		Render(content)
 
-	return style.Render(content)
+	return centeredCard(m.width, m.height, panel)
 }
 
-func (m chatModel) sessionLine(index, width int) string {
-	session := m.sessions[index]
+func (m chatModel) pickerStatus(inner int) string {
+	switch {
+	case m.err != "":
+		return dangerStyle.Render(truncate("! "+inline(m.err), inner))
+	case m.loading:
+		return m.spinner.View() + " " + mutedStyle.Render(truncate(m.loadingText, inner-4))
+	case m.toast != "":
+		return successStyle.Render(truncate(m.toast, inner))
+	}
+	return ""
+}
 
+func (m chatModel) pickerListView(inner int) string {
+	if m.picker == nil {
+		return ""
+	}
+
+	matches := m.pickerMatches()
+
+	if m.picker.err != "" {
+		return dangerStyle.Render(truncate(m.picker.err, inner))
+	}
+	if m.picker.loading && len(matches) == 0 {
+		return m.spinner.View() + " " + mutedStyle.Render("Loading conversations...")
+	}
+	if len(matches) == 0 {
+		if strings.TrimSpace(m.picker.filter.Value()) != "" {
+			return mutedStyle.Render("No conversations match your filter.")
+		}
+		return mutedStyle.Render("No conversations yet. Your first message starts one.")
+	}
+
+	maxRows := max(3, min(len(matches), m.height-10))
+	start := 0
+	if m.picker.index >= maxRows {
+		start = m.picker.index - maxRows + 1
+	}
+	end := min(len(matches), start+maxRows)
+
+	rows := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		rows = append(rows, m.pickerRow(matches[i], i, inner))
+	}
+
+	return strings.Join(rows, "\n")
+}
+
+func (m chatModel) pickerRow(session sessionData, index, width int) string {
 	marker := "  "
 	if m.current != nil && m.current.ID == session.ID {
 		marker = "● "
 	}
 
 	when := relativeTime(session.UpdatedAt)
-	nameWidth := width - 2 - lipgloss.Width(when) - 1
+	nameWidth := width - lipgloss.Width(marker) - lipgloss.Width(when) - 1
 	name := truncate(session.Name, max(4, nameWidth))
 	line := marker + name
 
@@ -772,22 +1085,13 @@ func (m chatModel) sessionLine(index, width int) string {
 	}
 
 	switch {
-	case index == m.selected:
-		return selectedStyle.Width(width).Render(line)
+	case index == m.picker.index:
+		return selectedStyle.Render(line)
 	case m.current != nil && m.current.ID == session.ID:
 		return accentStyle.Render(line)
 	default:
 		return line
 	}
-}
-
-func (m chatModel) statusView() string {
-	left := accentStyle.Render("✦") + " " + mutedStyle.Render(truncate(m.me.Email, max(8, m.width/3)))
-	right := mutedStyle.Render("ctrl+h help · ctrl+n new · ctrl+c quit")
-	if m.sidebarWidth == 0 {
-		right = mutedStyle.Render("ctrl+h help · ctrl+c quit")
-	}
-	return spread(" "+left, right+" ", m.width)
 }
 
 func (m chatModel) confirmView() string {
@@ -796,12 +1100,10 @@ func (m chatModel) confirmView() string {
 
 	title := "Delete conversation?"
 	body := "This removes the conversation and all of its messages."
-	action := "[y] delete    [n] cancel"
 
 	if m.confirm != nil && m.confirm.action == "logout" {
 		title = "Log out of JanoLuck?"
 		body = "You'll need to sign in again to keep chatting."
-		action = "[y] log out    [n] cancel"
 	}
 	if m.confirm != nil && m.confirm.name != "" {
 		body = "“" + truncate(m.confirm.name, max(10, inner-4)) + "” and all of its messages will be removed."
@@ -811,18 +1113,8 @@ func (m chatModel) confirmView() string {
 		mutedStyle.Render(wrapText(body, inner)) + "\n\n" +
 		accentStyle.Render("[y]") + mutedStyle.Render(" confirm    ") +
 		accentStyle.Render("[n]") + mutedStyle.Render(" cancel")
-	_ = action
 
 	return centeredCard(m.width, m.height, cardStyle(width).Render(content))
-}
-
-func (m chatModel) indexOfSession(id string) int {
-	for i := range m.sessions {
-		if m.sessions[i].ID == id {
-			return i
-		}
-	}
-	return -1
 }
 
 func (m chatModel) upsertSession(session sessionData) []sessionData {
@@ -838,7 +1130,7 @@ func (m chatModel) upsertSession(session sessionData) []sessionData {
 func chronological(chats []chatData) []chatData {
 	reversed := make([]chatData, len(chats))
 	for i := range chats {
-		reversed[i] = chats[len(chats)-1-i]
+		reversed[i] = chats[len(chats)-i-1]
 	}
 	return reversed
 }
@@ -899,6 +1191,16 @@ func sendChatCmd(c *client, session sessionData, message string) tea.Cmd {
 	}
 }
 
+func listSessionsCmd(c *client) tea.Cmd {
+	return func() tea.Msg {
+		list, err := c.listSessions(context.Background(), 1, 50)
+		if err != nil {
+			return sessionsLoadedMsg{err: err}
+		}
+		return sessionsLoadedMsg{sessions: list.Sessions}
+	}
+}
+
 func loadSessionCmd(c *client, sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
@@ -914,28 +1216,6 @@ func loadSessionCmd(c *client, sessionID string) tea.Cmd {
 		}
 
 		return sessionOpenedMsg{session: session, chats: list.Chats}
-	}
-}
-
-func refreshSessionsCmd(c *client, current *sessionData) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-
-		list, err := c.listSessions(ctx, 1, 50)
-		if err != nil {
-			return refreshResultMsg{err: err}
-		}
-
-		var chats []chatData
-		if current != nil {
-			data, err := c.listChats(ctx, current.ID, 1, 100)
-			if err != nil {
-				return refreshResultMsg{err: err}
-			}
-			chats = data.Chats
-		}
-
-		return refreshResultMsg{sessions: list.Sessions, chats: chats}
 	}
 }
 

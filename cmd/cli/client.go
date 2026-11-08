@@ -57,6 +57,11 @@ func (c *client) do(ctx context.Context, method, path string, body any, auth boo
 		}
 		if c.accessExpired() {
 			if err := c.refresh(ctx); err != nil {
+				var apiErr *apiError
+				if errors.As(err, &apiErr) && (apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusBadRequest) {
+					_ = c.clear()
+					return nil, errSessionExpired
+				}
 				return nil, err
 			}
 		}

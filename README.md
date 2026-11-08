@@ -75,22 +75,44 @@ Running `janoluck` opens a full-screen chat app. If you are not signed in, it
 starts on the login screen; `ctrl+n` switches to sign-up and a 6-digit code
 from your email verifies the account.
 
-The workspace has a sessions sidebar, the conversation, and a composer. Your
-first message starts a new conversation automatically.
+On launch you get a clean, centered composer. Your first message starts a new
+conversation automatically; there is no sidebar.
+
+Type `/` in the composer to see matching commands; `tab` completes the
+highlighted one. `/session` works as an alias for `/sessions`.
+
+| Command | Action |
+| --- | --- |
+| `/sessions` | Browse previous conversations (type to filter) |
+| `/new` | Start a new conversation |
+| `/profile` | Edit your profile |
+| `/logout` | Log out |
+| `/help` | Show commands and shortcuts |
+| `/quit` | Quit |
+
+In the conversation view, your messages align to the right and Jano's to the
+left, with a scrollbar down the side:
 
 | Key | Action |
 | --- | --- |
-| `enter` | Send a message / open the selected session |
+| `enter` | Send a message |
 | `ctrl+j` | Insert a newline in the composer |
-| `tab` | Move focus between the sidebar and the composer |
-| `j` / `k` | Move through sessions when the sidebar is focused |
-| `ctrl+n` | Start a new conversation |
-| `ctrl+r` | Refresh sessions and messages (or `r` in the sidebar) |
-| `d` | Delete the selected session |
-| `ctrl+p` | Edit your profile |
-| `ctrl+l` | Log out |
-| `ctrl+h` | Show keyboard shortcuts |
+| `↑` / `↓` | Scroll the conversation line by line |
+| mouse wheel | Scroll the conversation |
+| `pgup` / `pgdown` | Scroll a page |
+| `ctrl+u` / `ctrl+d` | Scroll half a page |
+| `ctrl+h` | Show commands and shortcuts |
 | `ctrl+c` | Quit |
+
+Inside the `/session` picker:
+
+| Key | Action |
+| --- | --- |
+| type | Filter conversations by name |
+| `↑` / `↓` | Move through conversations |
+| `enter` | Open the selected conversation |
+| `ctrl+d` | Delete the selected conversation |
+| `esc` | Close the picker |
 
 JWTs and the last opened session are stored in the OS config directory
 (`~/.config/janoluck/auth.json` on Linux) with `0600` permissions. Override the

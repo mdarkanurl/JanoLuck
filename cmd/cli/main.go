@@ -43,7 +43,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	program := tea.NewProgram(newAppModel(c, opts.apiURL), tea.WithAltScreen())
+	program := tea.NewProgram(
+		newAppModel(c, opts.apiURL),
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+	)
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -77,18 +81,18 @@ func parseArgs(args []string) (options, error) {
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch arg {
-		case "--api-url=":
+		switch {
+		case strings.HasPrefix(arg, "--api-url="):
 			opts.apiURL = strings.TrimPrefix(arg, "--api-url=")
-		case "--api-url":
+		case arg == "--api-url":
 			if i+1 >= len(args) {
 				return options{}, fmt.Errorf("--api-url requires a value")
 			}
 			i++
 			opts.apiURL = args[i]
-		case "--version":
+		case arg == "--version":
 			opts.version = true
-		case "--help", "-h":
+		case arg == "--help" || arg == "-h":
 			opts.help = true
 		default:
 			return options{}, fmt.Errorf("unknown argument %q", arg)

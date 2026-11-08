@@ -62,7 +62,7 @@ func fieldBorder(focused bool, width int) lipgloss.Style {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(color).
 		Padding(0, 1).
-		Width(max(1, width-4))
+		Width(max(1, width-2))
 }
 
 func centeredCard(width, height int, content string) string {

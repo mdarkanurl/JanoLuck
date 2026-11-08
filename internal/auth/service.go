@@ -163,6 +163,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*AuthTokens
 		return nil, err
 	}
 
+	// TODO dont fully depend on Redis for storing refresh tokens
 	oldHash := HashRefreshToken(refreshToken)
 	storedUserID, err := s.repo.GetRefreshUserID(ctx, oldHash)
 	if err != nil {

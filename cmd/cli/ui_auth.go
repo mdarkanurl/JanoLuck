@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type authMode int
@@ -117,7 +118,7 @@ func (m *authModel) setSize(width, height int) {
 	m.height = height
 
 	cardWidth := min(64, max(40, width-4))
-	inner := cardWidth - 8
+	inner := cardWidth - 2
 	inputWidth := max(12, inner-6)
 
 	m.email.Width = inputWidth
@@ -310,10 +311,10 @@ func (m authModel) submit() (authModel, tea.Cmd) {
 
 func (m authModel) View() string {
 	cardWidth := min(64, max(40, m.width-4))
-	inner := cardWidth - 8
+	inner := cardWidth - 2
 
 	var body strings.Builder
-	body.WriteString(logoStyle.Render("✦ JanoLuck"))
+	body.WriteString(logoStyle.Render("JanoLuck"))
 	body.WriteString("\n")
 	body.WriteString(mutedStyle.Render("your optimistic friend for what-ifs"))
 	body.WriteString("\n\n")
@@ -367,7 +368,11 @@ func (m authModel) View() string {
 	body.WriteString("\n\n")
 	body.WriteString(mutedStyle.Render("server: " + truncate(m.apiURL, inner-10)))
 
-	return centeredCard(m.width, m.height, cardStyle(cardWidth).Render(body.String()))
+	block := lipgloss.NewStyle().
+		Width(cardWidth).
+		Render(body.String())
+
+	return centeredCard(m.width, m.height, block)
 }
 
 func (m authModel) renderField(label string, input textinput.Model, focused bool, width int) string {

@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type profileModel struct {
@@ -102,7 +103,7 @@ func (m *profileModel) setSize(width, height int) {
 	m.height = height
 
 	cardWidth := min(64, max(40, width-4))
-	inner := cardWidth - 8
+	inner := cardWidth - 2
 	inputWidth := max(12, inner-6)
 
 	m.name.Width = inputWidth
@@ -194,10 +195,10 @@ func (m profileModel) save() (profileModel, tea.Cmd) {
 
 func (m profileModel) View() string {
 	cardWidth := min(64, max(40, m.width-4))
-	inner := cardWidth - 8
+	inner := cardWidth - 2
 
 	var body strings.Builder
-	body.WriteString(logoStyle.Render("✦ JanoLuck"))
+	body.WriteString(logoStyle.Render("JanoLuck"))
 	body.WriteString("\n")
 	body.WriteString(mutedStyle.Render(truncate(m.me.Email, inner)))
 	body.WriteString("\n\n")
@@ -234,7 +235,11 @@ func (m profileModel) View() string {
 	body.WriteString(accentStyle.Render("[tab]") + mutedStyle.Render(" next    "))
 	body.WriteString(accentStyle.Render("[esc]") + mutedStyle.Render(" back"))
 
-	return centeredCard(m.width, m.height, cardStyle(cardWidth).Render(body.String()))
+	block := lipgloss.NewStyle().
+		Width(cardWidth).
+		Render(body.String())
+
+	return centeredCard(m.width, m.height, block)
 }
 
 func (m profileModel) renderField(label string, input textinput.Model, focused bool, width int) string {

@@ -43,10 +43,12 @@ type bootstrapMsg struct {
 	me       meData
 	sessions []sessionData
 	profile  *profileData
-	current  *sessionData
-	chats    []chatData
 	err      error
 }
+
+type openHelpMsg struct{}
+
+type openProfileMsg struct{}
 
 type authenticatedMsg struct{}
 
@@ -108,20 +110,16 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "esc", "ctrl+h", "?":
 				m.help = false
+				if m.screen == screenChat {
+					m.chat.focusInput()
+				}
 			}
 			return m, nil
 		}
 
-		if m.screen == screenChat {
-			switch msg.String() {
-			case "ctrl+h":
-				m.help = true
-				return m, nil
-			case "ctrl+p":
-				m.profile = newProfileModel(m.client, m.me, m.chat.profile, m.width, m.height)
-				m.screen = screenProfile
-				return m, m.profile.Init()
-			}
+		if m.screen == screenChat && msg.String() == "ctrl+h" {
+			m.help = true
+			return m, nil
 		}
 
 		if m.screen == screenProfile && msg.String() == "esc" && !m.profile.saving {
@@ -141,6 +139,15 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = screenLoading
 		m.loadingErr = ""
 		return m, tea.Batch(bootstrapCmd(m.client), m.spinner.Tick)
+
+	case openHelpMsg:
+		m.help = true
+		return m, nil
+
+	case openProfileMsg:
+		m.profile = newProfileModel(m.client, m.me, m.chat.profile, m.width, m.height)
+		m.screen = screenProfile
+		return m, m.profile.Init()
 
 	case bootstrapMsg:
 		return m.handleBootstrap(msg)
@@ -205,7 +212,7 @@ func (m appModel) handleBootstrap(msg bootstrapMsg) (tea.Model, tea.Cmd) {
 	}
 
 	m.me = msg.me
-	m.chat = newChatModel(m.client, msg.me, msg.profile, msg.sessions, msg.current, msg.chats, m.width, m.height)
+	m.chat = newChatModel(m.client, msg.me, msg.profile, msg.sessions, m.width, m.height)
 	m.screen = screenChat
 
 	return m, m.chat.Init()
@@ -252,7 +259,7 @@ func (m appModel) loadingView() string {
 	width := min(66, max(34, m.width-4))
 
 	var body strings.Builder
-	body.WriteString(logoStyle.Render("✦ JanoLuck"))
+	body.WriteString(logoStyle.Render("JanoLuck"))
 	body.WriteString("\n")
 	body.WriteString(mutedStyle.Render("your optimistic friend for what-ifs"))
 	body.WriteString("\n\n")
@@ -260,48 +267,62 @@ func (m appModel) loadingView() string {
 	if m.loadingErr == "" {
 		body.WriteString(m.spinner.View())
 		body.WriteString(" ")
-		body.WriteString(titleStyle.Render("Connecting..."))
+		body.WriteString(mutedStyle.Render("Connecting..."))
 		body.WriteString("\n")
-		body.WriteString(mutedStyle.Render(truncate(m.apiURL, width-10)))
+		body.WriteString(mutedStyle.Render(truncate(m.apiURL, width)))
 	} else {
 		body.WriteString(dangerStyle.Render("Could not connect"))
 		body.WriteString("\n\n")
-		body.WriteString(mutedStyle.Render(wrapText(m.loadingErr, width-10)))
+		body.WriteString(mutedStyle.Render(wrapText(m.loadingErr, width)))
 		body.WriteString("\n\n")
 		body.WriteString(accentStyle.Render("[r]") + mutedStyle.Render(" retry    "))
 		body.WriteString(accentStyle.Render("[ctrl+c]") + mutedStyle.Render(" quit"))
 	}
 
-	return centeredCard(m.width, m.height, cardStyle(width).Render(body.String()))
+	block := lipgloss.NewStyle().
+		Width(width).
+		Align(lipgloss.Center).
+		Render(body.String())
+
+	return centeredCard(m.width, m.height, block)
 }
 
 func helpView(width, height int) string {
 	cardWidth := min(68, max(40, width-4))
 
-	key := func(k, description string) string {
+	entry := func(k, description string) string {
 		return accentStyle.Render(fmt.Sprintf("%-12s", k)) + mutedStyle.Render(description)
 	}
 
 	lines := []string{
-		titleStyle.Render("Keyboard shortcuts"),
+		titleStyle.Render("Commands & shortcuts"),
 		"",
-		mutedStyle.Render("NAVIGATION"),
-		key("tab", "switch between sessions and composer"),
-		key("j / k", "move through sessions"),
-		key("enter", "open a session or send a message"),
-		key("ctrl+j", "insert a newline"),
-		key("esc", "close help or leave profile"),
+		mutedStyle.Render("COMMANDS"),
+		entry("/sessions", "browse and open previous chats"),
+		entry("/new", "start a new conversation"),
+		entry("/profile", "edit your profile"),
+		entry("/logout", "log out"),
+		entry("/help", "show this help"),
+		entry("/quit", "quit JanoLuck"),
 		"",
-		mutedStyle.Render("CONVERSATIONS"),
-		key("ctrl+n", "start a new conversation"),
-		key("ctrl+r", "refresh sessions and messages"),
-		key("d", "delete the selected session"),
-		key("ctrl+p", "edit your profile"),
-		key("ctrl+l", "log out"),
+		mutedStyle.Render("COMPOSER"),
+		entry("enter", "send a message"),
+		entry("ctrl+j", "insert a newline"),
+		entry("tab", "complete a slash command"),
+		entry("ctrl+c", "quit"),
 		"",
-		mutedStyle.Render("GENERAL"),
-		key("ctrl+h", "toggle this help"),
-		key("ctrl+c", "quit"),
+		mutedStyle.Render("CONVERSATION"),
+		entry("↑ / ↓", "scroll messages line by line"),
+		entry("wheel", "scroll messages with the mouse"),
+		entry("pgup/pgdn", "scroll a page"),
+		entry("ctrl+u/d", "scroll half a page"),
+		"",
+		mutedStyle.Render("SESSIONS"),
+		entry("type", "filter conversations"),
+		entry("↑ / ↓", "move through conversations"),
+		entry("enter", "open the selected conversation"),
+		entry("ctrl+d", "delete the selected conversation"),
+		entry("esc", "close the picker"),
 		"",
 		mutedStyle.Render("Press esc or ctrl+h to close."),
 	}
@@ -315,7 +336,7 @@ func cardStyle(width int) lipgloss.Style {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorPrimary).
 		Padding(1, 3).
-		Width(max(20, width-8))
+		Width(max(20, width-2))
 }
 
 func bootstrapCmd(c *client) tea.Cmd {
@@ -337,34 +358,10 @@ func bootstrapCmd(c *client) tea.Cmd {
 			profile = &value
 		}
 
-		var current *sessionData
-		var chats []chatData
-
-		if len(list.Sessions) > 0 {
-			chosen := 0
-			if c.creds.LastSessionID != "" {
-				for i := range list.Sessions {
-					if list.Sessions[i].ID == c.creds.LastSessionID {
-						chosen = i
-						break
-					}
-				}
-			}
-
-			if session, err := c.getSession(ctx, list.Sessions[chosen].ID); err == nil {
-				current = &session
-				if data, err := c.listChats(ctx, session.ID, 1, 100); err == nil {
-					chats = data.Chats
-				}
-			}
-		}
-
 		return bootstrapMsg{
 			me:       me,
 			sessions: list.Sessions,
 			profile:  profile,
-			current:  current,
-			chats:    chats,
 		}
 	}
 }
