@@ -454,6 +454,101 @@ func TestThinkingIndicatorLivesInMessageStream(t *testing.T) {
 	}
 }
 
+func TestAuthMouseClickFocusesField(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	// cell returns the screen position of a field's label, found from the
+	// rendered view so the test does not depend on layout internals.
+	cell := func(m authModel, label string) (int, int) {
+		for y, line := range strings.Split(stripANSI(m.View()), "\n") {
+			if idx := strings.Index(line, label); idx >= 0 {
+				return idx, y
+			}
+		}
+		t.Fatalf("label %q not rendered", label)
+		return 0, 0
+	}
+	click := func(m authModel, x, y int) authModel {
+		updated, _ := m.Update(tea.MouseMsg{
+			X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+		})
+		return updated
+	}
+
+	login := newAuthModel(c, "http://localhost:3000", 80, 24)
+	if login.focus != 0 {
+		t.Fatalf("initial focus = %d, want 0", login.focus)
+	}
+
+	emailX, emailY := cell(login, "Email")
+	passX, passY := cell(login, "Password")
+
+	// Clicking the password field moves focus there (label row + box middle).
+	login = click(login, passX+2, passY+2)
+	if login.focus != 1 {
+		t.Fatalf("focus after clicking password = %d, want 1", login.focus)
+	}
+	// ...and back to email.
+	login = click(login, emailX+2, emailY+2)
+	if login.focus != 0 {
+		t.Fatalf("focus after clicking email = %d, want 0", login.focus)
+	}
+	// Clicking off the card changes nothing.
+	login = click(login, 0, 0)
+	if login.focus != 0 {
+		t.Fatalf("focus after clicking empty space = %d, want 0", login.focus)
+	}
+
+	// The text caret follows the click inside the field.
+	login.email.SetValue("hello@example.com")
+	emailX, emailY = cell(login, "Email")
+	end := click(login, emailX+40, emailY+2)
+	if end.email.Position() != len([]rune("hello@example.com")) {
+		t.Fatalf("caret at end of field = %d, want %d", end.email.Position(), len([]rune("hello@example.com")))
+	}
+	start := click(login, emailX+4, emailY+2) // 1 border + 1 padding + "› " prompt
+	if start.email.Position() != 0 {
+		t.Fatalf("caret at start of field = %d, want 0", start.email.Position())
+	}
+
+	// The signup form has three fields, laid out below the same email field.
+	signup := newAuthModel(c, "http://localhost:3000", 80, 24)
+	signup.mode = authSignup
+	signupEmailX, signupEmailY := cell(signup, "Email")
+	signup = click(signup, signupEmailX+2, signupEmailY+2)
+	if signup.focus != 0 {
+		t.Fatalf("focus after clicking signup email = %d, want 0", signup.focus)
+	}
+	confirmX, confirmY := cell(signup, "Confirm password")
+	signup = click(signup, confirmX+2, confirmY+2)
+	if signup.focus != 2 {
+		t.Fatalf("focus after clicking confirm password = %d, want 2", signup.focus)
+	}
+}
+
+func stripANSI(s string) string {
+	var out []rune
+	inEscape := false
+	for _, r := range s {
+		switch {
+		case inEscape:
+			if r == 'm' {
+				inEscape = false
+			}
+		case r == '\x1b':
+			inEscape = true
+		default:
+			out = append(out, r)
+		}
+	}
+	return string(out)
+}
+
 func TestSaveCredentialsPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "auth.json")
 	if err := saveCredentials(path, credentials{Email: "a@b.com"}); err != nil {

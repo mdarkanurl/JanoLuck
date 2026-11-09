@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"unicode"
 
@@ -168,6 +169,9 @@ func (m authModel) Update(msg tea.Msg) (authModel, tea.Cmd) {
 		}
 		return m, func() tea.Msg { return authenticatedMsg{} }
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+n":
@@ -240,6 +244,86 @@ func (m *authModel) cycleFocus(delta int) tea.Cmd {
 	return m.focusField(m.focus + delta)
 }
 
+// handleMouse focuses the field under the pointer, so the form can be navigated
+// with the mouse as well as with tab/shift+tab.
+func (m authModel) handleMouse(msg tea.MouseMsg) (authModel, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+
+	box, cell, ok := m.fieldAt(msg.X, msg.Y)
+	if !ok {
+		return m, nil
+	}
+
+	cmd := m.focusField(box.index)
+	m.setCursorAt(box.index, cell)
+	return m, cmd
+}
+
+// fieldAt maps a screen cell to the field rendered under it, returning the box
+// and the click's column within it. It mirrors how View centres the card.
+func (m authModel) fieldAt(x, y int) (authFieldBox, int, bool) {
+	block, boxes := m.layout()
+	if len(boxes) == 0 {
+		return authFieldBox{}, 0, false
+	}
+
+	lines := strings.Split(block, "\n")
+
+	// lipgloss.Place centres the block by padding the smaller side, and pads
+	// each line by its own width, so the remainder goes to the left.
+	top := 0
+	if gap := m.height - len(lines); gap > 0 {
+		top = gap - int(math.Round(float64(gap)*0.5))
+	}
+
+	for _, box := range boxes {
+		relY := y - top
+		if relY < box.labelLine || relY > box.bottom || relY >= len(lines) {
+			continue
+		}
+
+		lineWidth := lipgloss.Width(lines[relY])
+		left := 0
+		if gap := m.width - lineWidth; gap > 0 {
+			left = gap - int(math.Round(float64(gap)*0.5))
+		}
+
+		if relX := x - left; relX >= 0 && relX < box.width {
+			return box, relX, true
+		}
+	}
+	return authFieldBox{}, 0, false
+}
+
+// setCursorAt puts the text caret at the column that was clicked.
+func (m *authModel) setCursorAt(index int, boxCell int) {
+	fields := m.fields()
+	if index < 0 || index >= len(fields) {
+		return
+	}
+	field := fields[index]
+
+	// Column where the text starts: border + padding + prompt.
+	textCell := boxCell - (1 + 1 + lipgloss.Width(field.Prompt))
+	if textCell < 0 {
+		return // clicked the border or prompt: focus only
+	}
+
+	pos := 0
+	used := 0
+	for _, char := range field.Value() {
+		width := lipgloss.Width(string(char))
+		if used+width > textCell {
+			break
+		}
+		used += width
+		pos++
+	}
+	field.SetCursor(pos)
+}
+
 func (m *authModel) updateFocused(msg tea.Msg) (authModel, tea.Cmd) {
 	fields := m.fields()
 	if len(fields) == 0 {
@@ -309,68 +393,96 @@ func (m authModel) submit() (authModel, tea.Cmd) {
 	return m, nil
 }
 
-func (m authModel) View() string {
+// authFieldBox is where a field's label and bordered input sit inside the
+// rendered auth card. Coordinates are relative to the card block.
+type authFieldBox struct {
+	index     int
+	labelLine int // line index of the field's label
+	top       int // line index of the border's top edge
+	bottom    int // line index of the border's bottom edge (inclusive)
+	width     int // rendered width of the bordered box
+}
+
+// layout renders the auth card and reports where each field sits in it, so a
+// mouse click can be mapped back to the field under the pointer.
+func (m authModel) layout() (string, []authFieldBox) {
 	cardWidth := min(64, max(40, m.width-4))
 	inner := cardWidth - 2
 
 	var body strings.Builder
-	body.WriteString(logoStyle.Render("JanoLuck"))
-	body.WriteString("\n")
-	body.WriteString(mutedStyle.Render("your optimistic friend for what-ifs"))
-	body.WriteString("\n\n")
+	lines := 0 // finished lines == index of the line currently being written
+	write := func(s string) {
+		body.WriteString(s)
+		lines += strings.Count(s, "\n")
+	}
+
+	boxes := make([]authFieldBox, 0, 3)
+	field := func(index int, label string, input textinput.Model, focused bool) {
+		labelLine := lines
+		rendered := m.renderField(label, input, focused, inner)
+		write(rendered)
+
+		boxLines := strings.Split(rendered, "\n")
+		boxes = append(boxes, authFieldBox{
+			index:     index,
+			labelLine: labelLine,
+			top:       labelLine + 1,
+			bottom:    labelLine + len(boxLines) - 1,
+			width:     lipgloss.Width(boxLines[len(boxLines)-1]),
+		})
+	}
+
+	write(logoStyle.Render("JanoLuck") + "\n")
+	write(mutedStyle.Render("your optimistic friend for what-ifs") + "\n\n")
 
 	switch m.mode {
 	case authLogin:
-		body.WriteString(titleStyle.Render("Welcome back"))
-		body.WriteString("\n")
-		body.WriteString(mutedStyle.Render("Sign in to pick up where you left off."))
-		body.WriteString("\n\n")
-		body.WriteString(m.renderField("Email", m.email, m.focus == 0, inner))
-		body.WriteString("\n")
-		body.WriteString(m.renderField("Password", m.password, m.focus == 1, inner))
+		write(titleStyle.Render("Welcome back") + "\n")
+		write(mutedStyle.Render("Sign in to pick up where you left off.") + "\n\n")
+		field(0, "Email", m.email, m.focus == 0)
+		write("\n")
+		field(1, "Password", m.password, m.focus == 1)
 
 	case authSignup:
-		body.WriteString(titleStyle.Render("Create your account"))
-		body.WriteString("\n")
-		body.WriteString(mutedStyle.Render("We'll email you a 6-digit verification code."))
-		body.WriteString("\n\n")
-		body.WriteString(m.renderField("Email", m.email, m.focus == 0, inner))
-		body.WriteString("\n")
-		body.WriteString(m.renderField("Password", m.password, m.focus == 1, inner))
-		body.WriteString("\n")
-		body.WriteString(m.renderField("Confirm password", m.confirm, m.focus == 2, inner))
+		write(titleStyle.Render("Create your account") + "\n")
+		write(mutedStyle.Render("We'll email you a 6-digit verification code.") + "\n\n")
+		field(0, "Email", m.email, m.focus == 0)
+		write("\n")
+		field(1, "Password", m.password, m.focus == 1)
+		write("\n")
+		field(2, "Confirm password", m.confirm, m.focus == 2)
 
 	case authVerify:
-		body.WriteString(titleStyle.Render("Check your email"))
-		body.WriteString("\n")
-		body.WriteString(mutedStyle.Render("Enter the code sent to " + truncate(m.signupEmail, inner-4)))
-		body.WriteString("\n\n")
-		body.WriteString(m.renderField("Verification code", m.code, true, inner))
+		write(titleStyle.Render("Check your email") + "\n")
+		write(mutedStyle.Render("Enter the code sent to " + truncate(m.signupEmail, inner-4)) + "\n\n")
+		field(0, "Verification code", m.code, true)
 	}
 
-	body.WriteString("\n\n")
+	write("\n\n")
 
 	if m.notice != "" {
-		body.WriteString(successStyle.Render(wrapText(m.notice, inner)))
-		body.WriteString("\n")
+		write(successStyle.Render(wrapText(m.notice, inner)) + "\n")
 	}
 	if m.err != "" {
-		body.WriteString(dangerStyle.Render(wrapText(m.err, inner)))
-		body.WriteString("\n")
+		write(dangerStyle.Render(wrapText(m.err, inner)) + "\n")
 	}
 	if m.loading {
-		body.WriteString(m.spinner.View() + " " + mutedStyle.Render("One moment..."))
-		body.WriteString("\n")
+		write(m.spinner.View() + " " + mutedStyle.Render("One moment...") + "\n")
 	}
 
-	body.WriteString("\n")
-	body.WriteString(m.footer())
-	body.WriteString("\n\n")
-	body.WriteString(mutedStyle.Render("server: " + truncate(m.apiURL, inner-10)))
+	write("\n")
+	write(m.footer() + "\n\n")
+	write(mutedStyle.Render("server: " + truncate(m.apiURL, inner-10)))
 
 	block := lipgloss.NewStyle().
 		Width(cardWidth).
 		Render(body.String())
+
+	return block, boxes
+}
+
+func (m authModel) View() string {
+	block, _ := m.layout()
 
 	return centeredCard(m.width, m.height, block)
 }
