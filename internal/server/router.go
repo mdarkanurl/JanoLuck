@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/mdarkanurl/JanoLuck/internal/auth"
 	"github.com/mdarkanurl/JanoLuck/internal/chats"
+	"github.com/mdarkanurl/JanoLuck/internal/modes"
 	"github.com/mdarkanurl/JanoLuck/internal/sessions"
 	"github.com/mdarkanurl/JanoLuck/internal/users"
 )
@@ -16,6 +17,7 @@ func NewRouter(
 	usersHandler *users.Handler,
 	sessionsHandler *sessions.Handler,
 	chatsHandler *chats.Handler,
+	modesHandler *modes.Handler,
 ) chi.Router {
 	r := chi.NewRouter()
 
@@ -53,6 +55,15 @@ func NewRouter(
 
 			r.Post("/sessions/{sessionID}/chats", chatsHandler.CreateChat)
 			r.Get("/sessions/{sessionID}/chats", chatsHandler.ListChats)
+
+			r.Post("/modes", modesHandler.CreateMode)
+			r.Get("/modes", modesHandler.ListModes)
+			r.Get("/modes/active", modesHandler.GetActiveMode)
+			r.Put("/modes/active", modesHandler.SetActiveMode)
+			r.Delete("/modes/active", modesHandler.ClearActiveMode)
+			r.Get("/modes/{modeID}", modesHandler.GetMode)
+			r.Put("/modes/{modeID}", modesHandler.UpdateMode)
+			r.Delete("/modes/{modeID}", modesHandler.DeleteMode)
 		})
 	})
 

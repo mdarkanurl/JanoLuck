@@ -16,6 +16,7 @@ var (
 	ErrNotFound        = errors.New("chat not found")
 	ErrSessionNotFound = errors.New("session not found")
 	ErrNotFirstChat    = errors.New("It is not first chat")
+	ErrNoActiveMode    = errors.New("no active mode")
 )
 
 type Service struct {
@@ -57,6 +58,16 @@ func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr, conte
 		return Chat{}, err
 	}
 
+	var modeName, modePrompt string
+	activeMode, err := s.repo.GetActiveModeByUserID(ctx, userID)
+	if err != nil && !errors.Is(err, ErrNoActiveMode) {
+		return Chat{}, err
+	}
+	if err == nil {
+		modeName = activeMode.Name
+		modePrompt = activeMode.Prompt
+	}
+
 	// Generate embedding for the message
 	embedding, err := s.llm.GenerateEmbedding(content)
 	if err != nil {
@@ -75,7 +86,7 @@ func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr, conte
 	}
 
 	// Generate prediction by LLM
-	prediction, err := s.llm.GeneratePrediction(content, previousChats)
+	prediction, err := s.llm.GeneratePrediction(content, previousChats, modeName, modePrompt)
 	if err != nil {
 		return Chat{}, fmt.Errorf("%w: llm GeneratePrediction: %v", ErrInternal, err)
 	}

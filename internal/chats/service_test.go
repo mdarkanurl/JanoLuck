@@ -355,3 +355,18 @@ func TestServiceCreateChatSessionLookupErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestServiceCreateChatModeLookupError(t *testing.T) {
+	svc := NewService(testRepository(t, &testutil.DB{
+		Query: func(query string, args []driver.NamedValue) (driver.Rows, error) {
+			if strings.Contains(query, "SessionExistsByUserID") {
+				return testutil.NewRows([]string{"exists"}, []driver.Value{true}), nil
+			}
+			return testutil.QueryError(errors.New("boom"))
+		},
+	}), nil)
+
+	if _, err := svc.CreateChat(context.Background(), testUserID.String(), testSessionID.String(), "hello"); !errors.Is(err, ErrInternal) {
+		t.Errorf("got %v, want ErrInternal", err)
+	}
+}

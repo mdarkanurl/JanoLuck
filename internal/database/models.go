@@ -23,6 +23,16 @@ type Chat struct {
 	UpdateAt  time.Time
 }
 
+type Mode struct {
+	ID        uuid.UUID
+	Userid    uuid.NullUUID
+	Name      string
+	Prompt    string
+	Isbuiltin bool
+	CreateAt  time.Time
+	UpdateAt  time.Time
+}
+
 type Profile struct {
 	ID        uuid.UUID
 	Name      string
@@ -45,5 +55,11 @@ type User struct {
 	Email    string
 	Password string
 	CreateAt time.Time
+	UpdateAt time.Time
+}
+
+type UserActiveMode struct {
+	Userid   uuid.UUID
+	Modeid   uuid.UUID
 	UpdateAt time.Time
 }

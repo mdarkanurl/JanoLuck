@@ -99,6 +99,59 @@ func TestRepositorySessionExistsByUserID(t *testing.T) {
 	})
 }
 
+func TestRepositoryGetActiveModeByUserID(t *testing.T) {
+	modeColumns := []string{"id", "userId", "name", "prompt", "isBuiltIn", "create_at", "update_at"}
+	modeValues := []driver.Value{
+		testChatID.String(),
+		testUserID.String(),
+		"Motivation",
+		"Be uplifting",
+		false,
+		testTime,
+		testTime,
+	}
+
+	t.Run("success", func(t *testing.T) {
+		repo := testRepository(t, &testutil.DB{
+			Query: func(string, []driver.NamedValue) (driver.Rows, error) {
+				return testutil.NewRows(modeColumns, modeValues), nil
+			},
+		})
+
+		mode, err := repo.GetActiveModeByUserID(context.Background(), testUserID)
+		if err != nil {
+			t.Fatalf("GetActiveModeByUserID() error = %v", err)
+		}
+		if mode.Name != "Motivation" || mode.Prompt != "Be uplifting" {
+			t.Errorf("unexpected mode: %+v", mode)
+		}
+	})
+
+	t.Run("no active mode", func(t *testing.T) {
+		repo := testRepository(t, &testutil.DB{
+			Query: func(string, []driver.NamedValue) (driver.Rows, error) {
+				return testutil.QueryError(sql.ErrNoRows)
+			},
+		})
+
+		if _, err := repo.GetActiveModeByUserID(context.Background(), testUserID); !errors.Is(err, ErrNoActiveMode) {
+			t.Errorf("got %v, want ErrNoActiveMode", err)
+		}
+	})
+
+	t.Run("query error", func(t *testing.T) {
+		repo := testRepository(t, &testutil.DB{
+			Query: func(string, []driver.NamedValue) (driver.Rows, error) {
+				return testutil.QueryError(errors.New("boom"))
+			},
+		})
+
+		if _, err := repo.GetActiveModeByUserID(context.Background(), testUserID); !errors.Is(err, ErrInternal) {
+			t.Errorf("got %v, want ErrInternal", err)
+		}
+	})
+}
+
 func TestRepositoryCreateChat(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		repo := testRepository(t, &testutil.DB{

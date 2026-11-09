@@ -79,6 +79,18 @@ func (r *Repository) ListSimilarChatsBySessionID(ctx context.Context, sessionID,
 	return chats, nil
 }
 
+func (r *Repository) GetActiveModeByUserID(ctx context.Context, userID uuid.UUID) (database.Mode, error) {
+	mode, err := r.db.GetActiveModeByUserID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return database.Mode{}, ErrNoActiveMode
+		}
+		return database.Mode{}, fmt.Errorf("%w: db GetActiveModeByUserID: %v", ErrInternal, err)
+	}
+
+	return mode, nil
+}
+
 func (r *Repository) CountChatsBySessionID(ctx context.Context, sessionID, userID uuid.UUID) (int, error) {
 	total, err := r.db.CountChatsBySessionID(ctx, database.CountChatsBySessionIDParams{
 		Sessionid: uuid.NullUUID{UUID: sessionID, Valid: true},

@@ -124,7 +124,7 @@ func TestGeneratePrediction(t *testing.T) {
 		_, _ = w.Write([]byte(chatResponse("A bright future awaits")))
 	})
 
-	prediction, err := svc.GeneratePrediction("What next?", []string{"first message", "second message"})
+	prediction, err := svc.GeneratePrediction("What next?", []string{"first message", "second message"}, "Motivation", "Be uplifting.")
 	if err != nil {
 		t.Fatalf("GeneratePrediction() error = %v", err)
 	}
@@ -133,6 +133,9 @@ func TestGeneratePrediction(t *testing.T) {
 	}
 	if !strings.Contains(requestBody, "- first message") || !strings.Contains(requestBody, "- second message") {
 		t.Error("request body missing previous chat context")
+	}
+	if !strings.Contains(requestBody, "Motivation") || !strings.Contains(requestBody, "Be uplifting.") {
+		t.Error("request body missing active mode instructions")
 	}
 }
 
@@ -146,7 +149,7 @@ func TestChatMethodsErrorResponses(t *testing.T) {
 	if _, err := svc.GenerateSessionName("hello"); err == nil {
 		t.Error("GenerateSessionName() expected error")
 	}
-	if _, err := svc.GeneratePrediction("hello", nil); err == nil {
+	if _, err := svc.GeneratePrediction("hello", nil, "", ""); err == nil {
 		t.Error("GeneratePrediction() expected error")
 	}
 }
@@ -160,7 +163,7 @@ func TestChatMethodsEmptyChoices(t *testing.T) {
 	if _, err := svc.GenerateSessionName("hello"); err == nil {
 		t.Error("GenerateSessionName() expected error for empty choices")
 	}
-	if _, err := svc.GeneratePrediction("hello", nil); err == nil {
+	if _, err := svc.GeneratePrediction("hello", nil, "", ""); err == nil {
 		t.Error("GeneratePrediction() expected error for empty choices")
 	}
 }

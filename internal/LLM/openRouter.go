@@ -85,12 +85,24 @@ Generate the perfect session name now.`,
 	return "", fmt.Errorf("could not extract session name from response")
 }
 
-func (l *LLM) GeneratePrediction(content string, previousChats []string) (string, error) {
+func (l *LLM) GeneratePrediction(content string, previousChats []string, modeName, modePrompt string) (string, error) {
 	ctx := context.Background()
 
 	client := newOpenRouterClient(l.apiKey)
 
 	systemPrompt := `You are a fortune teller. Generate a short, mystical prediction based on the user's message. Output only the prediction.`
+
+	if modePrompt = strings.TrimSpace(modePrompt); modePrompt != "" {
+		if modeName = strings.TrimSpace(modeName); modeName == "" {
+			modeName = "custom"
+		}
+		systemPrompt += fmt.Sprintf(`
+
+The user has selected the %q mode. Follow the mode instructions below while writing the prediction. They take priority over your default tone, but never override the need to keep the response safe, respectful, and clearly framed as reflection rather than guaranteed fact.
+
+Mode instructions:
+%s`, modeName, modePrompt)
+	}
 
 	if previousContext := formatPreviousChats(previousChats); previousContext != "" {
 		systemPrompt += `

@@ -8,8 +8,30 @@ A Go-based web application with JWT authentication, email verification, and user
 - JWT access/refresh tokens with Redis blacklisting
 - Password reset and change flows
 - User profiles with custom questions
+- Prediction modes: built-in (Motivation, Islamic) and user-created modes
 - Strong password validation
 - Email sending via Resend
+
+## Prediction modes
+
+Each user can select one active mode. The mode's instructions are added to the
+LLM prompt for every prediction in that user's sessions. Built-in modes
+(`Motivation` and `Islamic`) are seeded by the database migration; users can
+also create their own.
+
+| Method | Endpoint | Action |
+| --- | --- | --- |
+| `POST` | `/api/v1/modes` | Create a custom mode |
+| `GET` | `/api/v1/modes` | List built-in and own modes |
+| `GET` | `/api/v1/modes/{modeID}` | Get a mode |
+| `PUT` | `/api/v1/modes/{modeID}` | Update an own mode |
+| `DELETE` | `/api/v1/modes/{modeID}` | Delete an own mode |
+| `GET` | `/api/v1/modes/active` | Get the active mode |
+| `PUT` | `/api/v1/modes/active` | Set the active mode (`{"modeId":"..."}`) |
+| `DELETE` | `/api/v1/modes/active` | Clear the active mode |
+
+All mode endpoints require a valid Bearer access token. Built-in modes can be
+selected but not edited or deleted.
 
 ## Tech Stack
 
@@ -28,6 +50,7 @@ cmd/cli/               # terminal chat app (Bubble Tea)
 internal/
   auth/                # Authentication (handlers, service, middleware, tokens)
   users/               # User profiles (handlers, service, repository)
+  modes/               # Prediction modes (handlers, service, repository)
   config/              # Environment configuration
   database/            # Generated sqlc code
   email/               # Email service

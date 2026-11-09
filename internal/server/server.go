@@ -13,6 +13,7 @@ import (
 	"github.com/mdarkanurl/JanoLuck/internal/config"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
 	"github.com/mdarkanurl/JanoLuck/internal/email"
+	"github.com/mdarkanurl/JanoLuck/internal/modes"
 	"github.com/mdarkanurl/JanoLuck/internal/sessions"
 	"github.com/mdarkanurl/JanoLuck/internal/users"
 
@@ -80,7 +81,11 @@ func New() *Server {
 	chatsService := chats.NewService(chatsRepo, chatsLLM)
 	chatsHandler := chats.NewHandler(chatsService)
 
-	router := NewRouter(authHandler, tokenService, usersHandler, sessionsHandler, chatsHandler)
+	modesRepo := modes.NewRepository(dbQueries)
+	modesService := modes.NewService(modesRepo)
+	modesHandler := modes.NewHandler(modesService)
+
+	router := NewRouter(authHandler, tokenService, usersHandler, sessionsHandler, chatsHandler, modesHandler)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.PORT,
