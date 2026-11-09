@@ -7,7 +7,13 @@ RETURNING id, userId, name, prompt, isBuiltIn, create_at, update_at;
 SELECT id, userId, name, prompt, isBuiltIn, create_at, update_at
 FROM modes
 WHERE userId = $1 OR isBuiltIn = TRUE
-ORDER BY isBuiltIn DESC, lower(name) ASC;
+ORDER BY isBuiltIn DESC, lower(name) ASC
+LIMIT $2 OFFSET $3;
+
+-- name: CountModesByUserID :one
+SELECT COUNT(*)
+FROM modes
+WHERE userId = $1 OR isBuiltIn = TRUE;
 
 -- name: GetModeByID :one
 SELECT id, userId, name, prompt, isBuiltIn, create_at, update_at

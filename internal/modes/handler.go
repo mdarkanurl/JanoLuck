@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -120,6 +121,32 @@ func pathParam(w http.ResponseWriter, r *http.Request, name string) (string, boo
 	return value, true
 }
 
+func parsePagination(w http.ResponseWriter, r *http.Request) (int, int, bool) {
+	q := r.URL.Query()
+
+	page := DefaultPage
+	if raw := strings.TrimSpace(q.Get("page")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ErrorResponse{Error: "page must be an integer"})
+			return 0, 0, false
+		}
+		page = v
+	}
+
+	limit := DefaultLimit
+	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ErrorResponse{Error: "limit must be an integer"})
+			return 0, 0, false
+		}
+		limit = v
+	}
+
+	return page, limit, true
+}
+
 func userIDFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
 	userID, _, ok := auth.UserIDFromContext(r.Context())
 	if !ok || userID == "" {
@@ -192,12 +219,17 @@ func (h *Handler) CreateMode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListModes(w http.ResponseWriter, r *http.Request) {
+	page, limit, ok := parsePagination(w, r)
+	if !ok {
+		return
+	}
+
 	userID, ok := userIDFromRequest(w, r)
 	if !ok {
 		return
 	}
 
-	result, err := h.service.ListModes(r.Context(), userID)
+	result, err := h.service.ListModes(r.Context(), userID, page, limit)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -217,7 +249,10 @@ func (h *Handler) ListModes(w http.ResponseWriter, r *http.Request) {
 		Message: "modes retrieved",
 		Data: ModeListData{
 			Modes:        items,
+			Page:         page,
+			Limit:        limit,
 			Total:        result.Total,
+			HasMore:      page*limit < result.Total,
 			ActiveModeID: activeModeID,
 		},
 	})

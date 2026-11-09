@@ -25,6 +25,19 @@ func (q *Queries) ClearActiveMode(ctx context.Context, userid uuid.UUID) (int64,
 	return result.RowsAffected()
 }
 
+const countModesByUserID = `-- name: CountModesByUserID :one
+SELECT COUNT(*)
+FROM modes
+WHERE userId = $1 OR isBuiltIn = TRUE
+`
+
+func (q *Queries) CountModesByUserID(ctx context.Context, userid uuid.NullUUID) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countModesByUserID, userid)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createMode = `-- name: CreateMode :one
 INSERT INTO modes (userId, name, prompt)
 VALUES ($1, $2, $3)
@@ -123,10 +136,17 @@ SELECT id, userId, name, prompt, isBuiltIn, create_at, update_at
 FROM modes
 WHERE userId = $1 OR isBuiltIn = TRUE
 ORDER BY isBuiltIn DESC, lower(name) ASC
+LIMIT $2 OFFSET $3
 `
 
-func (q *Queries) ListModesByUserID(ctx context.Context, userid uuid.NullUUID) ([]Mode, error) {
-	rows, err := q.db.QueryContext(ctx, listModesByUserID, userid)
+type ListModesByUserIDParams struct {
+	Userid uuid.NullUUID
+	Limit  int32
+	Offset int32
+}
+
+func (q *Queries) ListModesByUserID(ctx context.Context, arg ListModesByUserIDParams) ([]Mode, error) {
+	rows, err := q.db.QueryContext(ctx, listModesByUserID, arg.Userid, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}

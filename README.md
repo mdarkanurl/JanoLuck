@@ -31,7 +31,9 @@ also create their own.
 | `DELETE` | `/api/v1/modes/active` | Clear the active mode |
 
 All mode endpoints require a valid Bearer access token. Built-in modes can be
-selected but not edited or deleted.
+selected but not edited or deleted. `GET /api/v1/modes` supports `page` and
+`limit` query parameters (`page` defaults to `1`, `limit` defaults to `20`, max
+`100` per page).
 
 ## Tech Stack
 

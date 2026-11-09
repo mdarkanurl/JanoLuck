@@ -22,6 +22,13 @@ type Service struct {
 	repo *Repository
 }
 
+const (
+	DefaultPage  = 1
+	DefaultLimit = 20
+	MaxPage      = 1_000_000
+	MaxLimit     = 100
+)
+
 type ListResult struct {
 	Modes        []database.Mode
 	Total        int
@@ -43,13 +50,25 @@ func (s *Service) CreateMode(ctx context.Context, userIDStr, name, prompt string
 	return s.repo.CreateMode(ctx, userID, name, prompt)
 }
 
-func (s *Service) ListModes(ctx context.Context, userIDStr string) (ListResult, error) {
+func (s *Service) ListModes(ctx context.Context, userIDStr string, page, limit int) (ListResult, error) {
 	userID, err := parseUUID(userIDStr, "user id")
 	if err != nil {
 		return ListResult{}, err
 	}
 
-	modes, err := s.repo.ListModesByUserID(ctx, userID)
+	if page < 1 || page > MaxPage {
+		return ListResult{}, fmt.Errorf("%w: page must be between 1 and %d", ErrInvalidInput, MaxPage)
+	}
+	if limit < 1 || limit > MaxLimit {
+		return ListResult{}, fmt.Errorf("%w: limit must be between 1 and %d", ErrInvalidInput, MaxLimit)
+	}
+
+	total, err := s.repo.CountModesByUserID(ctx, userID)
+	if err != nil {
+		return ListResult{}, err
+	}
+
+	modes, err := s.repo.ListModesByUserID(ctx, userID, limit, (page-1)*limit)
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -57,13 +76,13 @@ func (s *Service) ListModes(ctx context.Context, userIDStr string) (ListResult, 
 	var activeModeID uuid.UUID
 	activeMode, err := s.repo.GetActiveModeByUserID(ctx, userID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
-		return ListResult{Modes: modes, Total: len(modes), ActiveModeID: activeModeID}, err
+		return ListResult{Modes: modes, Total: total, ActiveModeID: activeModeID}, err
 	}
 	if err == nil {
 		activeModeID = activeMode.ID
 	}
 
-	return ListResult{Modes: modes, Total: len(modes), ActiveModeID: activeModeID}, nil
+	return ListResult{Modes: modes, Total: total, ActiveModeID: activeModeID}, nil
 }
 
 func (s *Service) GetMode(ctx context.Context, userIDStr, modeIDStr string) (database.Mode, error) {

@@ -37,8 +37,12 @@ func (r *Repository) CreateMode(ctx context.Context, userID uuid.UUID, name, pro
 	return mode, nil
 }
 
-func (r *Repository) ListModesByUserID(ctx context.Context, userID uuid.UUID) ([]database.Mode, error) {
-	modes, err := r.db.ListModesByUserID(ctx, uuid.NullUUID{UUID: userID, Valid: true})
+func (r *Repository) ListModesByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]database.Mode, error) {
+	modes, err := r.db.ListModesByUserID(ctx, database.ListModesByUserIDParams{
+		Userid: uuid.NullUUID{UUID: userID, Valid: true},
+		Limit:  int32(limit),
+		Offset: int32(offset),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: db ListModesByUserID: %v", ErrInternal, err)
 	}
@@ -48,6 +52,15 @@ func (r *Repository) ListModesByUserID(ctx context.Context, userID uuid.UUID) ([
 	}
 
 	return modes, nil
+}
+
+func (r *Repository) CountModesByUserID(ctx context.Context, userID uuid.UUID) (int, error) {
+	total, err := r.db.CountModesByUserID(ctx, uuid.NullUUID{UUID: userID, Valid: true})
+	if err != nil {
+		return 0, fmt.Errorf("%w: db CountModesByUserID: %v", ErrInternal, err)
+	}
+
+	return int(total), nil
 }
 
 func (r *Repository) GetModeByID(ctx context.Context, modeID, userID uuid.UUID) (database.Mode, error) {

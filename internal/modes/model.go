@@ -31,7 +31,10 @@ type ModeResponse struct {
 
 type ModeListData struct {
 	Modes        []ModeData `json:"modes"`
+	Page         int        `json:"page"`
+	Limit        int        `json:"limit"`
 	Total        int        `json:"total"`
+	HasMore      bool       `json:"hasMore"`
 	ActiveModeID string     `json:"activeModeId,omitempty"`
 }
 
