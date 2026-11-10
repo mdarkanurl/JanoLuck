@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/mdarkanurl/JanoLuck/internal/config"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
 	"github.com/mdarkanurl/JanoLuck/internal/email"
+	"github.com/mdarkanurl/JanoLuck/internal/kafka"
 	"github.com/mdarkanurl/JanoLuck/internal/modes"
 	"github.com/mdarkanurl/JanoLuck/internal/sessions"
 	"github.com/mdarkanurl/JanoLuck/internal/users"
@@ -24,6 +26,7 @@ type Server struct {
 	httpServer *http.Server
 	router     chi.Router
 	db         *sql.DB
+	producer   *kafka.Producer
 }
 
 func New() *Server {
@@ -64,7 +67,16 @@ func New() *Server {
 		time.Duration(refreshDays)*24*time.Hour,
 	)
 
-	authService := auth.AuthService(authRepo, emailServer, tokenService)
+	producer, err := kafka.NewProducer(
+		kafka.ParseBrokers(cfg.KAFKA_BROKERS),
+		kafka.WithClientID(cfg.KAFKA_CLIENT_ID),
+	)
+	if err != nil {
+		slog.Warn("kafka producer unavailable; signup verification emails cannot be queued", "error", err)
+		producer = nil
+	}
+
+	authService := auth.AuthService(authRepo, emailServer, tokenService, producer)
 	authHandler := auth.AuthHandler(authService)
 
 	usersRepo := users.NewRepository(dbQueries)
@@ -96,9 +108,22 @@ func New() *Server {
 		httpServer: httpServer,
 		router:     router,
 		db:         db,
+		producer:   producer,
 	}
 }
 
 func (s *Server) Start() error {
 	return s.httpServer.ListenAndServe()
+}
+
+// Close flushes queued Kafka messages and releases the database handle.
+func (s *Server) Close() error {
+	var err error
+	if s.producer != nil {
+		err = s.producer.Close()
+	}
+	if dbErr := s.db.Close(); dbErr != nil && err == nil {
+		err = dbErr
+	}
+	return err
 }

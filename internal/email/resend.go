@@ -28,10 +28,9 @@ func (r *Email) Send(
 		Subject: subject,
 	}
 
-	sent, err := client.Emails.Send(params)
-	if err != nil {
-		fmt.Println(err.Error())
+	if _, err := client.Emails.Send(params); err != nil {
+		return fmt.Errorf("resend: send email: %w", err)
 	}
-	fmt.Println(sent.Id)
+
 	return nil
 }

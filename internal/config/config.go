@@ -19,6 +19,9 @@ type Config struct {
 	LLM_API_KEY              string
 	LLM_MODEL_NAME           string
 	LLM_EMBED_MODEL_NAME     string
+	KAFKA_BROKERS            string
+	KAFKA_CLIENT_ID          string
+	KAFKA_CONSUMER_GROUP     string
 }
 
 func getEnv(key, fallback string) string {
@@ -51,5 +54,8 @@ func Load() Config {
 		LLM_API_KEY:              getEnv("LLM_API_KEY", ""),
 		LLM_MODEL_NAME:           getEnv("LLM_MODEL_NAME", ""),
 		LLM_EMBED_MODEL_NAME:     getEnv("LLM_EMBED_MODEL_NAME", ""),
+		KAFKA_BROKERS:            getEnv("KAFKA_BROKERS", "localhost:9092"),
+		KAFKA_CLIENT_ID:          getEnv("KAFKA_CLIENT_ID", "janoluck"),
+		KAFKA_CONSUMER_GROUP:     getEnv("KAFKA_CONSUMER_GROUP", "janoluck-email-worker"),
 	}
 }

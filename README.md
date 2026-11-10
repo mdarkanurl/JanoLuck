@@ -41,6 +41,7 @@ selected but not edited or deleted. `GET /api/v1/modes` supports `page` and
 - chi router
 - PostgreSQL (with sqlc)
 - Redis
+- Kafka (confluent-kafka-go)
 - JWT (golang-jwt)
 - Resend for emails
 - validator for request validation
@@ -49,13 +50,15 @@ selected but not edited or deleted. `GET /api/v1/modes` supports `page` and
 
 ```
 cmd/cli/               # terminal chat app (Bubble Tea)
+cmd/worker/            # Kafka email worker
 internal/
   auth/                # Authentication (handlers, service, middleware, tokens)
   users/               # User profiles (handlers, service, repository)
   modes/               # Prediction modes (handlers, service, repository)
   config/              # Environment configuration
   database/            # Generated sqlc code
-  email/               # Email service
+  email/               # Email service and worker
+  kafka/               # Kafka producer and consumer
 sql/
   schema/              # Goose migration files
   queries/             # SQL queries
@@ -69,9 +72,73 @@ Copy `.env.example` to `.env` and set the required values:
 PORT=3000
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/janoluck?sslmode=disable
 REDIS_ADDR=localhost:6379
+KAFKA_BROKERS=localhost:9092
+KAFKA_CLIENT_ID=janoluck
+KAFKA_CONSUMER_GROUP=janoluck-email-worker
 RESEND_API_KEY=your_api_key
 JWT_SECRET=your_secret
 ```
+
+## Kafka
+
+Start the local single-node broker (KRaft, no ZooKeeper):
+
+```bash
+docker compose up -d kafka
+```
+
+It listens on `localhost:9092`; topic auto-creation is enabled for local
+development. Set `KAFKA_BROKERS` (comma-separated) and `KAFKA_CLIENT_ID` in
+`.env` to change the defaults.
+
+The HTTP server creates the producer at startup and passes it to the auth
+service. Construct it once and reuse it:
+
+```go
+producer, err := kafka.NewProducer(
+    kafka.ParseBrokers(cfg.KAFKA_BROKERS),
+    kafka.WithClientID(cfg.KAFKA_CLIENT_ID),
+)
+if err != nil {
+    // Log and continue. Construction does not require a reachable broker.
+}
+defer producer.Close()
+
+err = producer.Produce(ctx, "user.events", userID, map[string]any{
+    "type": "signed_up",
+})
+```
+
+`Produce` marshals the value as JSON, uses the key for partitioning and waits
+for the broker acknowledgement (or for the context to finish). If Kafka is
+unavailable at startup the app keeps running; delivery failures are returned
+from `Produce` and `Close`. Use `ProduceRaw` for pre-encoded payloads and
+headers.
+
+Signup verification emails are published to `email.verification` as JSON jobs
+(`{"to","subject","body"}`). The `cmd/worker` process consumes that topic and
+delivers the email. Signup returns an internal error if the job cannot be
+published, so keep the worker running alongside the API.
+
+`confluent-kafka-go` uses cgo and bundles librdkafka, so builds need `CGO_ENABLED=1`
+and a C toolchain. Dependencies are vendored; run `go mod tidy && go mod vendor`
+after changing them.
+
+## Email worker
+
+The worker consumes verification email jobs and sends them through Resend:
+
+```bash
+go run ./cmd/worker
+```
+
+It uses `KAFKA_BROKERS`, `KAFKA_CONSUMER_GROUP` (default
+`janoluck-email-worker`) and `RESEND_API_KEY`. Offsets are committed manually
+after each message. Sends are retried up to 5 times with exponential backoff;
+malformed jobs and jobs older than 5 minutes (the signup verification TTL) are
+logged and skipped, and sends that still fail after the final attempt are logged
+and skipped. Stop it with `ctrl+c` or `SIGTERM`; in-flight work is left
+uncommitted for redelivery.
 
 ## Running
 

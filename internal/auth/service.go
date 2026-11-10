@@ -10,10 +10,14 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"time"
 
-	"github.com/mdarkanurl/JanoLuck/internal/email"
+	emailpkg "github.com/mdarkanurl/JanoLuck/internal/email"
+	"github.com/mdarkanurl/JanoLuck/internal/kafka"
 	"golang.org/x/crypto/bcrypt"
 )
+
+const kafkaPublishTimeout = 5 * time.Second
 
 var (
 	ErrInvalidInput        = errors.New("invalid input")
@@ -26,12 +30,13 @@ var (
 
 type Service struct {
 	repo        *Repository
-	emailServer *email.Email
+	emailServer *emailpkg.Email
 	tokens      *TokenService
+	producer    *kafka.Producer
 }
 
-func AuthService(repo *Repository, emailService *email.Email, tokens *TokenService) *Service {
-	return &Service{repo: repo, emailServer: emailService, tokens: tokens}
+func AuthService(repo *Repository, emailService *emailpkg.Email, tokens *TokenService, producer *kafka.Producer) *Service {
+	return &Service{repo: repo, emailServer: emailService, tokens: tokens, producer: producer}
 }
 
 func hashCode(code int) string {
@@ -68,13 +73,26 @@ func (s *Service) SignUp(ctx context.Context, email, password string) error {
 	rawCode := int(n.Int64()) + 100000
 	codeHash := hashCode(rawCode)
 
-	// TODO use here asynchronous job processing
-	if err := s.emailServer.Send(email, "verify your e-mail", "here is your verifucatio code:"+strconv.Itoa(rawCode)); err != nil {
-		return fmt.Errorf("%w: send verification code: %v", ErrInternal, err)
+	if s.producer == nil {
+		return fmt.Errorf("%w: kafka producer is not configured", ErrInternal)
 	}
 
 	if err := s.repo.CreateUserInRedis(ctx, email, string(hashed), codeHash); err != nil {
 		return err
+	}
+
+	job := emailpkg.Job{
+		To:      email,
+		Subject: "verify your e-mail",
+		Body:    "here is your verification code:" + strconv.Itoa(rawCode),
+	}
+
+	publishCtx, cancel := context.WithTimeout(ctx, kafkaPublishTimeout)
+	defer cancel()
+
+	if err := s.producer.Produce(publishCtx, emailpkg.VerificationTopic, job.To, job); err != nil {
+		_ = s.repo.DeletePendingUser(ctx, email)
+		return fmt.Errorf("%w: enqueue verification email: %v", ErrInternal, err)
 	}
 
 	return nil
