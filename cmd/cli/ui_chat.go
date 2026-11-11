@@ -61,6 +61,9 @@ type chatModel struct {
 	err         string
 	toast       string
 
+	streamText string
+	streamCh   chan chatStreamMsg
+
 	viewport viewport.Model
 	input    textarea.Model
 	spinner  spinner.Model
@@ -91,6 +94,15 @@ type sessionCreatedMsg struct {
 }
 
 type chatSentMsg struct {
+	prediction chatData
+	session    *sessionData
+	sessions   []sessionData
+	err        error
+}
+
+type chatStreamMsg struct {
+	delta      string
+	done       bool
 	prediction chatData
 	session    *sessionData
 	sessions   []sessionData
@@ -171,7 +183,6 @@ func (m *chatModel) setSize(width, height int) {
 	m.renderMessages()
 }
 
-// contentWidth is the width of the chat column (composer, messages, header).
 func (m chatModel) contentWidth() int {
 	return max(20, min(88, m.width-4))
 }
@@ -281,40 +292,26 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		m.loadingText = "Jano is thinking..."
 		m.renderMessages()
 
-		return m, tea.Batch(sendChatCmd(m.client, msg.session, msg.pending), m.spinner.Tick)
+		return m.startStream(msg.session, msg.pending)
 
 	case chatSentMsg:
-		m.loading = false
-		m.err = ""
+		return m.handleChatSent(msg)
 
-		if msg.session != nil {
-			m.current = msg.session
-			m.sessions = m.upsertSession(*msg.session)
-			_ = m.client.setSession(msg.session.ID)
-		}
-		if msg.sessions != nil {
-			m.sessions = msg.sessions
-			m.refreshCurrentSession(msg.sessions)
-		}
-
-		if msg.err != nil {
-			if errors.Is(msg.err, errSessionExpired) || errors.Is(msg.err, errNotLoggedIn) {
-				return m, func() tea.Msg { return sessionExpiredMsg{err: msg.err} }
+	case chatStreamMsg:
+		if !msg.done {
+			if msg.delta != "" {
+				m.streamText += msg.delta
+				m.repaintStream()
 			}
-
-			m.err = inline(msg.err.Error())
-			m.chats = append(m.chats, chatData{
-				Role:      "error",
-				Content:   msg.err.Error(),
-				CreatedAt: time.Now().Format(time.RFC3339),
-			})
-			m.renderMessages()
-			return m, nil
+			return m, waitChatStreamCmd(m.streamCh)
 		}
 
-		m.chats = append(m.chats, msg.prediction)
-		m.renderMessages()
-		return m, nil
+		return m.handleChatSent(chatSentMsg{
+			prediction: msg.prediction,
+			session:    msg.session,
+			sessions:   msg.sessions,
+			err:        msg.err,
+		})
 
 	case sessionDeletedMsg:
 		m.loading = false
@@ -451,6 +448,41 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 	return m, cmd
 }
 
+func (m chatModel) handleChatSent(msg chatSentMsg) (chatModel, tea.Cmd) {
+	m.loading = false
+	m.err = ""
+	m.streamText = ""
+
+	if msg.session != nil {
+		m.current = msg.session
+		m.sessions = m.upsertSession(*msg.session)
+		_ = m.client.setSession(msg.session.ID)
+	}
+	if msg.sessions != nil {
+		m.sessions = msg.sessions
+		m.refreshCurrentSession(msg.sessions)
+	}
+
+	if msg.err != nil {
+		if errors.Is(msg.err, errSessionExpired) || errors.Is(msg.err, errNotLoggedIn) {
+			return m, func() tea.Msg { return sessionExpiredMsg{err: msg.err} }
+		}
+
+		m.err = inline(msg.err.Error())
+		m.chats = append(m.chats, chatData{
+			Role:      "error",
+			Content:   msg.err.Error(),
+			CreatedAt: time.Now().Format(time.RFC3339),
+		})
+		m.renderMessages()
+		return m, nil
+	}
+
+	m.chats = append(m.chats, msg.prediction)
+	m.renderMessages()
+	return m, nil
+}
+
 func (m chatModel) handleConfirmKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", "enter":
@@ -543,8 +575,6 @@ func filterSessions(sessions []sessionData, query string) []sessionData {
 	return matches
 }
 
-// commandSuggestions returns slash commands that match the composer's current
-// prefix. Suggestions are hidden once the command is complete or has arguments.
 func (m chatModel) commandSuggestions() []commandSuggestion {
 	if m.suggestDismissed || m.loading {
 		return nil
@@ -618,7 +648,19 @@ func (m chatModel) submit() (chatModel, tea.Cmd) {
 	}
 
 	m.loadingText = "Jano is thinking..."
-	return m, tea.Batch(sendChatCmd(m.client, *m.current, value), m.spinner.Tick)
+	return m.startStream(*m.current, value)
+}
+
+func (m chatModel) startStream(session sessionData, message string) (chatModel, tea.Cmd) {
+	ch := make(chan chatStreamMsg, 64)
+	m.streamCh = ch
+	m.streamText = ""
+
+	return m, tea.Batch(
+		startChatStreamCmd(m.client, session, message, ch),
+		waitChatStreamCmd(ch),
+		m.spinner.Tick,
+	)
 }
 
 func parseCommand(value string) (command, args string) {
@@ -632,7 +674,6 @@ func parseCommand(value string) (command, args string) {
 func (m chatModel) runCommand(value string) (chatModel, tea.Cmd) {
 	command, args := parseCommand(value)
 
-	// Let enter accept an unambiguous partial command, so "/ses" works too.
 	if !knownCommand(command) {
 		if matches := matchingCommands(command); len(matches) == 1 {
 			command = matches[0].name
@@ -786,8 +827,6 @@ func (m *chatModel) focusInput() {
 	m.input.Focus()
 }
 
-// repaintStream rebuilds the message stream on a spinner tick so the in-stream
-// status indicator animates, while keeping the reader's scroll position.
 func (m *chatModel) repaintStream() {
 	offset := m.viewport.YOffset
 	m.renderMessages()
@@ -801,17 +840,16 @@ func (m *chatModel) renderMessages() {
 
 	width := max(18, m.viewport.Width-4)
 
-	if len(m.chats) == 0 {
-		m.viewport.SetContent("")
-		return
-	}
-
 	blocks := make([]string, 0, len(m.chats)+1)
 	for _, chat := range m.chats {
 		blocks = append(blocks, m.renderChat(chat, width))
 	}
 	if m.loading {
-		blocks = append(blocks, m.statusBlock(width))
+		if m.streamText != "" {
+			blocks = append(blocks, m.renderStreaming(width))
+		} else {
+			blocks = append(blocks, m.statusBlock(width))
+		}
 	}
 
 	if len(blocks) == 0 {
@@ -823,8 +861,10 @@ func (m *chatModel) renderMessages() {
 	m.viewport.GotoBottom()
 }
 
-// statusBlock renders the pending-work indicator in the message stream, in
-// the spot a system message would appear, instead of under the composer.
+func (m chatModel) renderStreaming(width int) string {
+	return m.renderChat(chatData{Role: "assistant", Content: m.streamText + "▍"}, width)
+}
+
 func (m chatModel) statusBlock(width int) string {
 	text := m.loadingText
 	if text == "" {
@@ -871,7 +911,6 @@ func (m chatModel) renderChat(chat chatData, width int) string {
 		Foreground(colorText).
 		Render(wrapText(content, textWidth))
 
-	// Blank line between the name/date and the message body.
 	block := label + "\n\n" + body
 
 	return lipgloss.NewStyle().
@@ -996,7 +1035,6 @@ func (m chatModel) hintView() string {
 	case m.err != "":
 		return dangerStyle.Render(truncate("! "+inline(m.err), width))
 	case m.loading:
-		// The pending-work indicator lives in the message stream (statusBlock).
 		return ""
 	case m.toast != "":
 		return successStyle.Render(truncate(m.toast, width))
@@ -1217,42 +1255,68 @@ func createSessionCmd(c *client, pending string) tea.Cmd {
 	}
 }
 
-func sendChatCmd(c *client, session sessionData, message string) tea.Cmd {
+func startChatStreamCmd(c *client, session sessionData, message string, ch chan<- chatStreamMsg) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
+		go func() {
+			defer close(ch)
 
-		prediction, err := c.createChat(ctx, session.ID, message)
-		var replacement *sessionData
+			ctx := context.Background()
 
-		if err != nil && isNotFound(err) {
-			created, createErr := c.createSession(ctx, truncate(message, 1000))
-			if createErr != nil {
-				return chatSentMsg{err: createErr}
+			send := func(sessionID string) (chatData, error) {
+				return c.createChatStream(ctx, sessionID, message, func(delta string) {
+					ch <- chatStreamMsg{delta: delta}
+				})
 			}
-			replacement = &created
-			prediction, err = c.createChat(ctx, created.ID, message)
+
+			prediction, err := send(session.ID)
+			var replacement *sessionData
+
+			if err != nil && isNotFound(err) {
+				created, createErr := c.createSession(ctx, truncate(message, 1000))
+				if createErr != nil {
+					ch <- chatStreamMsg{done: true, err: createErr}
+					return
+				}
+				replacement = &created
+				prediction, err = send(created.ID)
+			}
+
+			if err != nil {
+				ch <- chatStreamMsg{done: true, session: replacement, err: err}
+				return
+			}
+
+			id := session.ID
+			if replacement != nil {
+				id = replacement.ID
+			}
+			_ = c.setSession(id)
+
+			var sessions []sessionData
+			if list, listErr := c.listSessions(ctx, 1, 50); listErr == nil {
+				sessions = list.Sessions
+			}
+
+			ch <- chatStreamMsg{
+				done:       true,
+				prediction: prediction,
+				session:    replacement,
+				sessions:   sessions,
+			}
+		}()
+
+		return nil
+	}
+}
+
+func waitChatStreamCmd(ch <-chan chatStreamMsg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
 		}
 
-		if err != nil {
-			return chatSentMsg{session: replacement, err: err}
-		}
-
-		id := session.ID
-		if replacement != nil {
-			id = replacement.ID
-		}
-		_ = c.setSession(id)
-
-		var sessions []sessionData
-		if list, listErr := c.listSessions(ctx, 1, 50); listErr == nil {
-			sessions = list.Sessions
-		}
-
-		return chatSentMsg{
-			prediction: prediction,
-			session:    replacement,
-			sessions:   sessions,
-		}
+		return msg
 	}
 }
 

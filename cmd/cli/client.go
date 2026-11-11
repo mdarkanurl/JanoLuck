@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -611,6 +612,213 @@ func (c *client) createChat(ctx context.Context, sessionID, content string) (cha
 		return chatData{}, err
 	}
 	return resp.Data, nil
+}
+
+type chatStreamEvent struct {
+	Type    string   `json:"type"`
+	Content string   `json:"content"`
+	Error   string   `json:"error"`
+	Chat    chatData `json:"chat"`
+}
+
+func (c *client) createChatStream(ctx context.Context, sessionID, content string, onDelta func(string)) (chatData, error) {
+	if err := c.prepareAuth(ctx); err != nil {
+		return chatData{}, err
+	}
+
+	resp, err := c.openChatStream(ctx, sessionID, content)
+	if err != nil {
+		return chatData{}, err
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+
+		if c.creds.RefreshToken == "" {
+			_ = c.clear()
+			return chatData{}, errSessionExpired
+		}
+
+		if err := c.refresh(ctx); err != nil {
+			var apiErr *apiError
+			if errors.As(err, &apiErr) && (apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusBadRequest) {
+				_ = c.clear()
+				return chatData{}, errSessionExpired
+			}
+			return chatData{}, fmt.Errorf("could not refresh session: %w", err)
+		}
+
+		resp, err = c.openChatStream(ctx, sessionID, content)
+		if err != nil {
+			return chatData{}, err
+		}
+
+		if resp.StatusCode == http.StatusUnauthorized {
+			resp.Body.Close()
+			_ = c.clear()
+			return chatData{}, errSessionExpired
+		}
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+
+		if resp.StatusCode == http.StatusNotFound && !isAPIErrorBody(raw) {
+			return c.createChat(ctx, sessionID, content)
+		}
+
+		return chatData{}, parseAPIError(resp.StatusCode, raw)
+	}
+
+	return readChatStream(resp.Body, onDelta)
+}
+
+func (c *client) prepareAuth(ctx context.Context) error {
+	if c.creds.AccessToken == "" {
+		return errNotLoggedIn
+	}
+
+	if !c.accessExpired() {
+		return nil
+	}
+
+	if err := c.refresh(ctx); err != nil {
+		var apiErr *apiError
+		if errors.As(err, &apiErr) && (apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusBadRequest) {
+			_ = c.clear()
+			return errSessionExpired
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (c *client) openChatStream(ctx context.Context, sessionID, content string) (*http.Response, error) {
+	payload, err := json.Marshal(map[string]string{
+		"content": content,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode request: %w", err)
+	}
+
+	endpoint := c.baseURL + apiPrefix + "/sessions/" + url.PathEscape(sessionID) + "/chats/stream"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "janoluck-cli/"+version)
+	if c.creds.AccessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	return resp, nil
+}
+
+func readChatStream(body io.Reader, onDelta func(string)) (chatData, error) {
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+
+	var chat chatData
+	var payload strings.Builder
+	completed := false
+
+	handle := func() error {
+		if payload.Len() == 0 {
+			return nil
+		}
+
+		raw := strings.TrimSpace(payload.String())
+		payload.Reset()
+
+		if raw == "" || raw == "[DONE]" {
+			return nil
+		}
+
+		var event chatStreamEvent
+		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			return fmt.Errorf("decode stream event: %w", err)
+		}
+
+		switch event.Type {
+		case "delta":
+			if event.Content != "" && onDelta != nil {
+				onDelta(event.Content)
+			}
+		case "done":
+			chat = event.Chat
+			completed = true
+		case "error":
+			message := strings.TrimSpace(event.Error)
+			if message == "" {
+				message = "the prediction failed"
+			}
+			return &apiError{Status: http.StatusInternalServerError, Message: message}
+		}
+
+		return nil
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if strings.TrimSpace(line) == "" {
+			if err := handle(); err != nil {
+				return chatData{}, err
+			}
+			continue
+		}
+
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data:")
+		data = strings.TrimPrefix(data, " ")
+
+		if payload.Len() > 0 {
+			payload.WriteByte('\n')
+		}
+		payload.WriteString(data)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return chatData{}, fmt.Errorf("read stream: %w", err)
+	}
+
+	if err := handle(); err != nil {
+		return chatData{}, err
+	}
+
+	if !completed {
+		return chatData{}, errors.New("the stream ended before the prediction was complete")
+	}
+
+	return chat, nil
+}
+
+func isAPIErrorBody(raw []byte) bool {
+	var resp errorResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return false
+	}
+
+	return resp.Error != "" || len(resp.Fields) > 0
 }
 
 func (c *client) listChats(ctx context.Context, sessionID string, page, limit int) (chatListData, error) {
