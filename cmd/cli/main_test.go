@@ -984,6 +984,86 @@ func TestClientModeEndpoints(t *testing.T) {
 	}
 }
 
+func TestClientCreateSessionRefreshesStoredSession(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			writeTestJSON(w, http.StatusCreated, sessionResponse{
+				Message: "session created",
+				Data: sessionData{
+					ID:     "s1",
+					Name:   "should I move to a new city",
+					UserID: "user-1",
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/s1":
+			writeTestJSON(w, http.StatusOK, sessionResponse{
+				Message: "session retrieved",
+				Data: sessionData{
+					ID:     "s1",
+					Name:   "Moving to a new city",
+					UserID: "user-1",
+				},
+			})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c, err := newClient(server.URL)
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	c.creds.AccessToken = "test-access"
+
+	session, err := c.createSession(t.Context(), "should I move to a new city")
+	if err != nil {
+		t.Fatalf("createSession: %v", err)
+	}
+	if session.Name != "Moving to a new city" {
+		t.Fatalf("session name = %q, want the stored title", session.Name)
+	}
+
+	want := []string{
+		"POST /api/v1/sessions",
+		"GET /api/v1/sessions/s1",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls =\n%s\nwant\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestChatSentRefreshesCurrentSessionName(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newChatModel(c, meData{}, nil, nil, 80, 24)
+	m.current = &sessionData{ID: "s1", Name: "should I move to a new city"}
+
+	result, _ := m.Update(chatSentMsg{
+		prediction: chatData{Role: "assistant", Content: "Go for it."},
+		sessions: []sessionData{{
+			ID:   "s1",
+			Name: "Moving to a new city",
+		}},
+	})
+
+	if result.current == nil || result.current.Name != "Moving to a new city" {
+		t.Fatalf("current session = %+v, want the generated title", result.current)
+	}
+}
+
 func writeTestJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

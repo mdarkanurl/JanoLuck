@@ -280,10 +280,6 @@ type tokenResponse struct {
 	Data    authTokens `json:"data"`
 }
 
-type messageResponse struct {
-	Message string `json:"message"`
-}
-
 type meData struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
@@ -557,6 +553,13 @@ func (c *client) createSession(ctx context.Context, content string) (sessionData
 	if err != nil {
 		return sessionData{}, err
 	}
+
+	if resp.Data.ID != "" {
+		if stored, getErr := c.getSession(ctx, resp.Data.ID); getErr == nil {
+			return stored, nil
+		}
+	}
+
 	return resp.Data, nil
 }
 

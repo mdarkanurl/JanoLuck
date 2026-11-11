@@ -294,6 +294,7 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 		if msg.sessions != nil {
 			m.sessions = msg.sessions
+			m.refreshCurrentSession(msg.sessions)
 		}
 
 		if msg.err != nil {
@@ -347,6 +348,7 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 
 		m.sessions = msg.sessions
+		m.refreshCurrentSession(msg.sessions)
 		if m.picker != nil {
 			m.picker.err = ""
 			m.clampPicker()
@@ -1192,6 +1194,20 @@ func removeSession(sessions []sessionData, id string) []sessionData {
 		}
 	}
 	return out
+}
+
+func (m *chatModel) refreshCurrentSession(sessions []sessionData) {
+	if m.current == nil {
+		return
+	}
+
+	for i := range sessions {
+		if sessions[i].ID == m.current.ID {
+			updated := sessions[i]
+			m.current = &updated
+			return
+		}
+	}
 }
 
 func createSessionCmd(c *client, pending string) tea.Cmd {
