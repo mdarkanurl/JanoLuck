@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,8 +14,14 @@ import (
 )
 
 const (
-	defaultPollTimeout = time.Second
-	defaultConsumerID  = "janoluck-worker"
+	defaultPollTimeout      = time.Second
+	defaultConsumerID       = "janoluck-worker"
+	defaultMaxAttempts      = 3
+	defaultRetryBackoff     = time.Second
+	maxRetryBackoff         = 30 * time.Second
+	defaultDeadLetterSuffix = ".dlq"
+	deadLetterTimeout       = 10 * time.Second
+	maxErrorHeaderLength    = 900
 )
 
 type Message struct {
@@ -29,19 +36,32 @@ type Message struct {
 
 type Handler func(ctx context.Context, msg Message) error
 
+type RawPublisher interface {
+	ProduceRaw(ctx context.Context, topic string, key, value []byte, headers map[string]string) error
+}
+
 type Consumer struct {
 	client      *kafka.Consumer
 	pollTimeout time.Duration
 	logger      *slog.Logger
+
+	maxAttempts      int
+	retryBackoff     time.Duration
+	deadLetter       RawPublisher
+	deadLetterSuffix string
 
 	closeOnce sync.Once
 	closeErr  error
 }
 
 type consumerConfig struct {
-	clientID    string
-	pollTimeout time.Duration
-	logger      *slog.Logger
+	clientID         string
+	pollTimeout      time.Duration
+	logger           *slog.Logger
+	maxAttempts      int
+	retryBackoff     time.Duration
+	deadLetter       RawPublisher
+	deadLetterSuffix string
 }
 
 type ConsumerOption func(*consumerConfig)
@@ -70,11 +90,46 @@ func WithConsumerLogger(logger *slog.Logger) ConsumerOption {
 	}
 }
 
+func WithMaxAttempts(attempts int) ConsumerOption {
+	return func(c *consumerConfig) {
+		if attempts > 0 {
+			c.maxAttempts = attempts
+		}
+	}
+}
+
+func WithRetryBackoff(backoff time.Duration) ConsumerOption {
+	return func(c *consumerConfig) {
+		if backoff > 0 {
+			c.retryBackoff = backoff
+		}
+	}
+}
+
+func WithDeadLetterPublisher(publisher RawPublisher) ConsumerOption {
+	return func(c *consumerConfig) {
+		if publisher != nil {
+			c.deadLetter = publisher
+		}
+	}
+}
+
+func WithDeadLetterTopicSuffix(suffix string) ConsumerOption {
+	return func(c *consumerConfig) {
+		if suffix != "" {
+			c.deadLetterSuffix = suffix
+		}
+	}
+}
+
 func NewConsumer(brokers []string, groupID string, topics []string, opts ...ConsumerOption) (*Consumer, error) {
 	cfg := consumerConfig{
-		clientID:    defaultConsumerID,
-		pollTimeout: defaultPollTimeout,
-		logger:      slog.Default(),
+		clientID:         defaultConsumerID,
+		pollTimeout:      defaultPollTimeout,
+		logger:           slog.Default(),
+		maxAttempts:      defaultMaxAttempts,
+		retryBackoff:     defaultRetryBackoff,
+		deadLetterSuffix: defaultDeadLetterSuffix,
 	}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -115,9 +170,13 @@ func NewConsumer(brokers []string, groupID string, topics []string, opts ...Cons
 	}
 
 	return &Consumer{
-		client:      client,
-		pollTimeout: cfg.pollTimeout,
-		logger:      cfg.logger,
+		client:           client,
+		pollTimeout:      cfg.pollTimeout,
+		logger:           cfg.logger,
+		maxAttempts:      cfg.maxAttempts,
+		retryBackoff:     cfg.retryBackoff,
+		deadLetter:       cfg.deadLetter,
+		deadLetterSuffix: cfg.deadLetterSuffix,
 	}, nil
 }
 
@@ -144,18 +203,11 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 		}
 
 		m := messageFromKafka(msg)
-		handlerErr := handler(ctx, m)
+		if err := c.handle(ctx, handler, m); err != nil {
+			return err
+		}
 		if ctx.Err() != nil {
 			return nil
-		}
-		if handlerErr != nil {
-			c.logger.Error(
-				"kafka message handler failed",
-				"topic", m.Topic,
-				"partition", m.Partition,
-				"offset", m.Offset,
-				"error", handlerErr,
-			)
 		}
 
 		if _, err := c.client.CommitMessage(msg); err != nil {
@@ -168,6 +220,101 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 			)
 		}
 	}
+}
+
+func (c *Consumer) handle(ctx context.Context, handler Handler, msg Message) error {
+	var lastErr error
+
+	for attempt := 1; attempt <= c.maxAttempts; attempt++ {
+		lastErr = handler(ctx, msg)
+		if lastErr == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+
+		c.logger.Error(
+			"kafka message handler failed",
+			"topic", msg.Topic,
+			"partition", msg.Partition,
+			"offset", msg.Offset,
+			"attempt", attempt,
+			"max_attempts", c.maxAttempts,
+			"error", lastErr,
+		)
+
+		if attempt == c.maxAttempts {
+			break
+		}
+
+		delay := c.retryDelayFor(attempt)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+	}
+
+	if c.deadLetter == nil {
+		c.logger.Error(
+			"kafka message dropped after exhausting retries; no dead-letter publisher configured",
+			"topic", msg.Topic,
+			"partition", msg.Partition,
+			"offset", msg.Offset,
+			"error", lastErr,
+		)
+		return nil
+	}
+
+	dlqTopic := msg.Topic + c.deadLetterSuffix
+	headers := map[string]string{
+		"x-original-topic":     msg.Topic,
+		"x-original-partition": strconv.Itoa(int(msg.Partition)),
+		"x-original-offset":    strconv.FormatInt(msg.Offset, 10),
+		"x-error":              truncate(lastErr.Error(), maxErrorHeaderLength),
+	}
+
+	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deadLetterTimeout)
+	defer cancel()
+
+	if err := c.deadLetter.ProduceRaw(publishCtx, dlqTopic, msg.Key, msg.Value, headers); err != nil {
+		return fmt.Errorf("kafka: dead-letter %s partition %d offset %d: %w", msg.Topic, msg.Partition, msg.Offset, err)
+	}
+
+	c.logger.Error(
+		"kafka message moved to dead-letter topic",
+		"topic", msg.Topic,
+		"dead_letter_topic", dlqTopic,
+		"partition", msg.Partition,
+		"offset", msg.Offset,
+		"error", lastErr,
+	)
+	return nil
+}
+
+func (c *Consumer) retryDelayFor(attempt int) time.Duration {
+	delay := c.retryBackoff
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay >= maxRetryBackoff {
+			return maxRetryBackoff
+		}
+	}
+	return delay
+}
+
+func truncate(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) > limit {
+		runes = runes[:limit]
+	}
+	return string(runes)
 }
 
 func (c *Consumer) Close() error {

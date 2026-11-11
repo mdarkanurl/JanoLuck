@@ -88,3 +88,21 @@ func (r *Repository) DeleteSession(ctx context.Context, sessionID, userID uuid.U
 
 	return nil
 }
+
+func (r *Repository) UpdateSessionName(ctx context.Context, sessionID, userID uuid.UUID, name string) error {
+	updated, err := r.db.UpdateSessionName(ctx, database.UpdateSessionNameParams{
+		ID:       sessionID,
+		Userid:   userID,
+		Name:     name,
+		UpdateAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("%w: db UpdateSessionName: %v", ErrInternal, err)
+	}
+
+	if updated == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}

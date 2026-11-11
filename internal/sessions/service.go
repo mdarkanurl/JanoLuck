@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
-	llm "github.com/mdarkanurl/JanoLuck/internal/LLM"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
 )
 
@@ -17,9 +18,33 @@ var (
 	ErrNotFound     = errors.New("session not found")
 )
 
+type Publisher interface {
+	Produce(ctx context.Context, topic, key string, value any) error
+}
+
 type Service struct {
-	repo *Repository
-	llm  *llm.LLM
+	repo     *Repository
+	titles   TitleGenerator
+	producer Publisher
+	logger   *slog.Logger
+}
+
+type ServiceOption func(*Service)
+
+func WithProducer(producer Publisher) ServiceOption {
+	return func(s *Service) {
+		if producer != nil {
+			s.producer = producer
+		}
+	}
+}
+
+func WithLogger(logger *slog.Logger) ServiceOption {
+	return func(s *Service) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
 }
 
 const (
@@ -27,10 +52,20 @@ const (
 	DefaultLimit = 20
 	MaxPage      = 1_000_000
 	MaxLimit     = 100
+
+	titlePublishTimeout = 5 * time.Second
 )
 
-func NewService(repo *Repository, llm *llm.LLM) *Service {
-	return &Service{repo: repo, llm: llm}
+func NewService(repo *Repository, generator TitleGenerator, opts ...ServiceOption) *Service {
+	s := &Service{
+		repo:   repo,
+		titles: generator,
+		logger: slog.Default(),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *Service) CreateSession(ctx context.Context, userIDStr, content string) (database.Session, error) {
@@ -39,13 +74,66 @@ func (s *Service) CreateSession(ctx context.Context, userIDStr, content string) 
 		return database.Session{}, err
 	}
 
-	// Generate title for a session
-	name, err := s.llm.GenerateSessionName(content)
-	if err != nil {
-		return database.Session{}, ErrInternal
+	name := fallbackSessionName(content)
+
+	if s.producer == nil {
+		if s.titles != nil {
+			generated, genErr := s.titles.GenerateSessionNameContext(ctx, content)
+			if genErr != nil {
+				s.logger.Warn("could not generate session name synchronously", "error", genErr)
+			} else if trimmed := strings.TrimSpace(generated); trimmed != "" {
+				name = trimmed
+			}
+		}
 	}
 
-	return s.repo.CreateSession(ctx, userID, name)
+	session, err := s.repo.CreateSession(ctx, userID, name)
+	if err != nil {
+		return database.Session{}, err
+	}
+
+	s.enqueueTitle(ctx, session, content)
+
+	return session, nil
+}
+
+func (s *Service) enqueueTitle(ctx context.Context, session database.Session, content string) {
+	if s.producer == nil {
+		return
+	}
+
+	sessionID := session.ID.String()
+	job := TitleJob{
+		SessionID: sessionID,
+		UserID:    session.Userid.String(),
+		Content:   content,
+	}
+
+	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titlePublishTimeout)
+	defer cancel()
+
+	if err := s.producer.Produce(publishCtx, TitleTopic, sessionID, job); err != nil {
+		s.logger.Warn(
+			"could not enqueue session title job; keeping fallback name",
+			"session_id", sessionID,
+			"error", err,
+		)
+	}
+}
+
+func fallbackSessionName(content string) string {
+	const maxRunes = 60
+
+	name := strings.Join(strings.Fields(content), " ")
+	if name == "" {
+		return "New session"
+	}
+
+	runes := []rune(name)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "…"
+	}
+	return name
 }
 
 func (s *Service) ListSessions(ctx context.Context, userIDStr string, page, limit int) (ListResult, error) {

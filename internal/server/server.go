@@ -81,7 +81,11 @@ func New() *Server {
 
 	sessionsRepo := sessions.NewRepository(dbQueries)
 	sessionsLLM := llm.NewOpenRouterService(cfg.LLM_API_KEY, cfg.LLM_MODEL_NAME, cfg.LLM_EMBED_MODEL_NAME)
-	sessionsService := sessions.NewService(sessionsRepo, sessionsLLM)
+	sessionOpts := []sessions.ServiceOption{}
+	if producer != nil {
+		sessionOpts = append(sessionOpts, sessions.WithProducer(producer))
+	}
+	sessionsService := sessions.NewService(sessionsRepo, sessionsLLM, sessionOpts...)
 	sessionsHandler := sessions.NewHandler(sessionsService)
 
 	chatsRepo := chats.NewRepository(dbQueries)

@@ -50,7 +50,7 @@ selected but not edited or deleted. `GET /api/v1/modes` supports `page` and
 
 ```
 cmd/cli/               # terminal chat app (Bubble Tea)
-cmd/worker/            # Kafka email worker
+cmd/worker/            # Kafka worker (email delivery + session titles)
 internal/
   auth/                # Authentication (handlers, service, middleware, tokens)
   users/               # User profiles (handlers, service, repository)
@@ -75,6 +75,7 @@ REDIS_ADDR=localhost:6379
 KAFKA_BROKERS=localhost:9092
 KAFKA_CLIENT_ID=janoluck
 KAFKA_CONSUMER_GROUP=janoluck-email-worker
+KAFKA_SESSION_CONSUMER_GROUP=janoluck-session-worker
 RESEND_API_KEY=your_api_key
 JWT_SECRET=your_secret
 ```
@@ -91,8 +92,9 @@ It listens on `localhost:9092`; topic auto-creation is enabled for local
 development. Set `KAFKA_BROKERS` (comma-separated) and `KAFKA_CLIENT_ID` in
 `.env` to change the defaults.
 
-The HTTP server creates the producer at startup and passes it to the auth
-service. Construct it once and reuse it:
+The HTTP server creates the producer at startup and shares it between the auth
+service (verification/reset emails) and the sessions service (title jobs).
+Construct it once and reuse it:
 
 ```go
 producer, err := kafka.NewProducer(
@@ -121,26 +123,46 @@ Signup verification and password reset emails are published to
 delivers the emails. The API returns an internal error if a job cannot be
 published, so keep the worker running alongside it.
 
+Session titles are generated asynchronously. `POST /api/v1/sessions` inserts the
+session immediately with a fallback name derived from the first message and
+publishes `session.title.requested` (`{"session_id","user_id","content"}`). The
+worker calls the LLM and renames the row, so the request no longer waits for the
+model. If Kafka is not configured the API falls back to generating the title
+inline; a failed publish keeps the fallback name.
+
+Consumers retry a failing handler three times with exponential backoff and then
+park the message on `<topic>.dlq` (payload preserved, with `x-original-topic`,
+`x-original-partition`, `x-original-offset` and `x-error` headers). Offsets are
+only committed once the message succeeds or reaches the dead-letter topic. Set
+the publisher with `kafka.WithDeadLetterPublisher`; without it failed messages
+are logged and dropped. `kafka.WithMaxAttempts` and `kafka.WithRetryBackoff`
+tune the retry policy.
+
 `confluent-kafka-go` uses cgo and bundles librdkafka, so builds need `CGO_ENABLED=1`
 and a C toolchain. Dependencies are vendored; run `go mod tidy && go mod vendor`
 after changing them.
 
-## Email worker
+## Worker
 
-The worker consumes verification and password reset email jobs and sends them
-through Resend:
+The worker consumes email jobs and session title requests in separate consumer
+groups, so slow LLM calls never delay email delivery:
 
 ```bash
 go run ./cmd/worker
 ```
 
 It uses `KAFKA_BROKERS`, `KAFKA_CONSUMER_GROUP` (default
-`janoluck-email-worker`) and `RESEND_API_KEY`. Offsets are committed manually
-after each message. Sends are retried up to 5 times with exponential backoff;
-malformed jobs are skipped, verification jobs older than 5 minutes and password
-reset jobs older than 10 minutes are skipped, and sends that still fail after
-the final attempt are logged and skipped. Stop it with `ctrl+c` or `SIGTERM`;
-in-flight work is left uncommitted for redelivery.
+`janoluck-email-worker`), `KAFKA_SESSION_CONSUMER_GROUP` (default
+`janoluck-session-worker`), `RESEND_API_KEY`, `DATABASE_URL` and the `LLM_*`
+settings. Offsets are committed manually after each message. Email sends are
+retried up to 5 times with exponential backoff; malformed jobs are sent to the
+dead-letter topic, verification jobs older than 5 minutes and password reset
+jobs older than 10 minutes are skipped, and sends that still fail after the
+final attempt are dead-lettered. Stale session title requests (older than 10
+minutes) and titles for deleted sessions are skipped. If the database is
+unreachable at startup, the worker logs a warning and runs only the email
+consumer; restart it once Postgres is back so title jobs are picked up. Stop it
+with `ctrl+c` or `SIGTERM`; in-flight work is left uncommitted for redelivery.
 
 ## Running
 
@@ -178,6 +200,7 @@ highlighted one. `/session` works as an alias for `/sessions`.
 | Command | Action |
 | --- | --- |
 | `/sessions` | Browse previous conversations (type to filter) |
+| `/modes` | Choose the active prediction mode, or manage custom modes |
 | `/new` | Start a new conversation |
 | `/profile` | Edit your profile |
 | `/logout` | Log out |
@@ -207,6 +230,22 @@ Inside the `/session` picker:
 | `enter` | Open the selected conversation |
 | `ctrl+d` | Delete the selected conversation |
 | `esc` | Close the picker |
+
+Inside the `/modes` picker:
+
+| Key | Action |
+| --- | --- |
+| `↑` / `↓` | Move through modes |
+| `enter` | Make the selected mode active |
+| `n` | Create a custom mode |
+| `e` | Edit the selected custom mode |
+| `d` | Delete the selected custom mode |
+| `/` or `tab` | Focus the filter (type to filter by name) |
+| `esc` | Leave the filter, or close the picker |
+
+Built-in modes can be selected but not edited or deleted. Custom modes open a
+small form: `tab` moves between the name and instructions, `ctrl+j` inserts a
+newline in the instructions, `enter` saves and `esc` cancels.
 
 JWTs and the last opened session are stored in the OS config directory
 (`~/.config/janoluck/auth.json` on Linux) with `0600` permissions. Override the

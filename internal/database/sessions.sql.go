@@ -134,3 +134,29 @@ func (q *Queries) ListSessionsByUserID(ctx context.Context, arg ListSessionsByUs
 	}
 	return items, nil
 }
+
+const updateSessionName = `-- name: UpdateSessionName :execrows
+UPDATE sessions
+SET name = $3, update_at = $4
+WHERE id = $1 AND userId = $2
+`
+
+type UpdateSessionNameParams struct {
+	ID       uuid.UUID
+	Userid   uuid.UUID
+	Name     string
+	UpdateAt time.Time
+}
+
+func (q *Queries) UpdateSessionName(ctx context.Context, arg UpdateSessionNameParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateSessionName,
+		arg.ID,
+		arg.Userid,
+		arg.Name,
+		arg.UpdateAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

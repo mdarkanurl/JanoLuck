@@ -219,3 +219,41 @@ func TestRepositoryDeleteSession(t *testing.T) {
 		}
 	})
 }
+
+func TestRepositoryUpdateSessionName(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		repo := testRepository(t, &testutil.DB{
+			Exec: func(string, []driver.NamedValue) (driver.Result, error) {
+				return testutil.Result(1)
+			},
+		})
+
+		if err := repo.UpdateSessionName(context.Background(), sessionID, sessionUserID, "New Name"); err != nil {
+			t.Fatalf("UpdateSessionName() error = %v", err)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		repo := testRepository(t, &testutil.DB{
+			Exec: func(string, []driver.NamedValue) (driver.Result, error) {
+				return testutil.Result(0)
+			},
+		})
+
+		if err := repo.UpdateSessionName(context.Background(), sessionID, sessionUserID, "New Name"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("got %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("exec error", func(t *testing.T) {
+		repo := testRepository(t, &testutil.DB{
+			Exec: func(string, []driver.NamedValue) (driver.Result, error) {
+				return testutil.ExecError(errors.New("boom"))
+			},
+		})
+
+		if err := repo.UpdateSessionName(context.Background(), sessionID, sessionUserID, "New Name"); !errors.Is(err, ErrInternal) {
+			t.Errorf("got %v, want ErrInternal", err)
+		}
+	})
+}

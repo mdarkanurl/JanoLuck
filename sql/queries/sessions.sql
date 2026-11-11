@@ -23,3 +23,8 @@ WHERE id = $1 AND userId = $2;
 -- name: DeleteSession :execrows
 DELETE FROM sessions
 WHERE id = $1 AND userId = $2;
+
+-- name: UpdateSessionName :execrows
+UPDATE sessions
+SET name = $3, update_at = $4
+WHERE id = $1 AND userId = $2;

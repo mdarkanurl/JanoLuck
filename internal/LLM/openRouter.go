@@ -23,8 +23,10 @@ func NewOpenRouterService(apiKey, modelName, embedModelName string) *LLM {
 }
 
 func (l *LLM) GenerateSessionName(content string) (string, error) {
-	ctx := context.Background()
+	return l.GenerateSessionNameContext(context.Background(), content)
+}
 
+func (l *LLM) GenerateSessionNameContext(ctx context.Context, content string) (string, error) {
 	client := newOpenRouterClient(l.apiKey)
 
 	res, err := client.Chat.Send(ctx, components.ChatRequest{
