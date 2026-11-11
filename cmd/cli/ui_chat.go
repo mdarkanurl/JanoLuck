@@ -18,6 +18,7 @@ import (
 type chatConfirm struct {
 	action    string
 	sessionID string
+	modeID    string
 	name      string
 }
 
@@ -35,6 +36,7 @@ type commandSuggestion struct {
 
 var commandSuggestions = []commandSuggestion{
 	{"/sessions", "browse previous conversations"},
+	{"/modes", "choose or edit prediction modes"},
 	{"/new", "start a new conversation"},
 	{"/profile", "edit your profile"},
 	{"/logout", "log out"},
@@ -68,6 +70,7 @@ type chatModel struct {
 
 	confirm *chatConfirm
 	picker  *sessionPicker
+	modes   *modePicker
 }
 
 type sessionsLoadedMsg struct {
@@ -161,6 +164,9 @@ func (m *chatModel) setSize(width, height int) {
 	if m.picker != nil {
 		m.picker.filter.Width = max(10, m.pickerInnerWidth()-3)
 	}
+	if m.modes != nil {
+		m.modes.setSize(m.pickerInnerWidth())
+	}
 
 	m.renderMessages()
 }
@@ -204,18 +210,20 @@ func (m *chatModel) resizeViewport() {
 func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
-		if !m.loading && (m.picker == nil || !m.picker.loading) {
+		modesBusy := m.modes != nil &&
+			(m.modes.loading || (m.modes.form != nil && m.modes.form.saving))
+		if !m.loading && !modesBusy && (m.picker == nil || !m.picker.loading) {
 			return m, nil
 		}
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
-		if m.loading && m.picker == nil && m.confirm == nil {
+		if m.loading && m.picker == nil && m.confirm == nil && m.modes == nil {
 			m.repaintStream()
 		}
 		return m, cmd
 
 	case tea.MouseMsg:
-		if m.picker != nil || m.confirm != nil || m.current == nil {
+		if m.picker != nil || m.modes != nil || m.confirm != nil || m.current == nil {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -226,6 +234,8 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		switch {
 		case m.confirm != nil:
 			return m.handleConfirmKey(msg)
+		case m.modes != nil:
+			return m.handleModesKey(msg)
 		case m.picker != nil:
 			return m.handlePickerKey(msg)
 		default:
@@ -342,6 +352,18 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.clampPicker()
 		}
 		return m, nil
+
+	case modesLoadedMsg:
+		return m.handleModesLoaded(msg)
+
+	case modeActivatedMsg:
+		return m.handleModeActivated(msg)
+
+	case modeDeletedMsg:
+		return m.handleModeDeleted(msg)
+
+	case modeSavedMsg:
+		return m.handleModeSaved(msg)
 	}
 
 	var cmd tea.Cmd
@@ -554,7 +576,7 @@ func matchingCommands(value string) []commandSuggestion {
 
 func knownCommand(value string) bool {
 	switch value {
-	case "/session", "/sessions", "/new", "/profile", "/logout", "/help", "/quit", "/exit":
+	case "/session", "/sessions", "/mode", "/modes", "/new", "/profile", "/logout", "/help", "/quit", "/exit":
 		return true
 	}
 	return false
@@ -621,6 +643,11 @@ func (m chatModel) runCommand(value string) (chatModel, tea.Cmd) {
 		m.syncInputHeight()
 		m.resizeViewport()
 		return m.openPicker(args)
+	case "/mode", "/modes":
+		m.input.Reset()
+		m.syncInputHeight()
+		m.resizeViewport()
+		return m.openModes(args)
 	case "/new":
 		m.input.Reset()
 		m.syncInputHeight()
@@ -732,6 +759,14 @@ func (m chatModel) runConfirm() (chatModel, tea.Cmd) {
 		m.loadingText = "Deleting conversation..."
 		m.renderMessages()
 		return m, tea.Batch(deleteSessionCmd(m.client, confirm.sessionID), m.spinner.Tick)
+	case "delete_mode":
+		if m.modes != nil {
+			m.modes.loading = true
+			m.modes.loadingText = "Deleting mode..."
+			m.modes.err = ""
+			m.modes.toast = ""
+		}
+		return m, tea.Batch(deleteModeCmd(m.client, confirm.modeID), m.spinner.Tick)
 	case "logout":
 		m.loading = true
 		m.loadingText = "Logging out..."
@@ -743,7 +778,7 @@ func (m chatModel) runConfirm() (chatModel, tea.Cmd) {
 }
 
 func (m *chatModel) focusInput() {
-	if m.picker != nil {
+	if m.picker != nil || m.modes != nil || m.confirm != nil {
 		return
 	}
 	m.input.Focus()
@@ -846,6 +881,9 @@ func (m chatModel) renderChat(chat chatData, width int) string {
 func (m chatModel) View() string {
 	if m.confirm != nil {
 		return m.confirmView()
+	}
+	if m.modes != nil {
+		return m.modesView()
 	}
 	if m.picker != nil {
 		return m.pickerView()
@@ -1101,12 +1139,23 @@ func (m chatModel) confirmView() string {
 	title := "Delete conversation?"
 	body := "This removes the conversation and all of its messages."
 
-	if m.confirm != nil && m.confirm.action == "logout" {
-		title = "Log out of JanoLuck?"
-		body = "You'll need to sign in again to keep chatting."
-	}
-	if m.confirm != nil && m.confirm.name != "" {
-		body = "“" + truncate(m.confirm.name, max(10, inner-4)) + "” and all of its messages will be removed."
+	if m.confirm != nil {
+		switch m.confirm.action {
+		case "logout":
+			title = "Log out of JanoLuck?"
+			body = "You'll need to sign in again to keep chatting."
+		case "delete_mode":
+			title = "Delete mode?"
+			body = "This removes the mode from your list. The conversation is not affected."
+		default:
+			if m.confirm.name != "" {
+				body = "“" + truncate(m.confirm.name, max(10, inner-4)) + "” and all of its messages will be removed."
+			}
+		}
+
+		if m.confirm.action == "delete_mode" && m.confirm.name != "" {
+			body = "“" + truncate(m.confirm.name, max(10, inner-4)) + "” will be removed from your modes."
+		}
 	}
 
 	content := titleStyle.Render(title) + "\n\n" +

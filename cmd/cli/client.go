@@ -379,6 +379,45 @@ type chatListResponse struct {
 	Data    chatListData `json:"data"`
 }
 
+type modeData struct {
+	ID        string `json:"id"`
+	UserID    string `json:"userId"`
+	Name      string `json:"name"`
+	Prompt    string `json:"prompt"`
+	IsBuiltIn bool   `json:"isBuiltIn"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+type modeResponse struct {
+	Message string   `json:"message"`
+	Data    modeData `json:"data"`
+}
+
+type modeListData struct {
+	Modes        []modeData `json:"modes"`
+	Page         int        `json:"page"`
+	Limit        int        `json:"limit"`
+	Total        int        `json:"total"`
+	HasMore      bool       `json:"hasMore"`
+	ActiveModeID string     `json:"activeModeId"`
+}
+
+type modeListResponse struct {
+	Message string       `json:"message"`
+	Data    modeListData `json:"data"`
+}
+
+type modeActionData struct {
+	ModeID string `json:"modeId"`
+	UserID string `json:"userId"`
+}
+
+type modeActionResponse struct {
+	Message string         `json:"message"`
+	Data    modeActionData `json:"data"`
+}
+
 // API methods.
 
 func (c *client) signup(ctx context.Context, email, password string) error {
@@ -587,4 +626,65 @@ func (c *client) listChats(ctx context.Context, sessionID string, page, limit in
 		return chatListData{}, err
 	}
 	return resp.Data, nil
+}
+
+func (c *client) listModes(ctx context.Context, page, limit int) (modeListData, error) {
+	query := url.Values{}
+	query.Set("page", fmt.Sprint(page))
+	query.Set("limit", fmt.Sprint(limit))
+
+	raw, err := c.do(ctx, http.MethodGet, "/modes?"+query.Encode(), nil, true)
+	if err != nil {
+		return modeListData{}, err
+	}
+
+	resp, err := decodeResponse[modeListResponse](raw)
+	if err != nil {
+		return modeListData{}, err
+	}
+	return resp.Data, nil
+}
+
+func (c *client) createMode(ctx context.Context, name, prompt string) (modeData, error) {
+	raw, err := c.do(ctx, http.MethodPost, "/modes", map[string]string{
+		"name":   name,
+		"prompt": prompt,
+	}, true)
+	if err != nil {
+		return modeData{}, err
+	}
+
+	resp, err := decodeResponse[modeResponse](raw)
+	if err != nil {
+		return modeData{}, err
+	}
+	return resp.Data, nil
+}
+
+func (c *client) updateMode(ctx context.Context, modeID, name, prompt string) (modeData, error) {
+	raw, err := c.do(ctx, http.MethodPut, "/modes/"+url.PathEscape(modeID), map[string]string{
+		"name":   name,
+		"prompt": prompt,
+	}, true)
+	if err != nil {
+		return modeData{}, err
+	}
+
+	resp, err := decodeResponse[modeResponse](raw)
+	if err != nil {
+		return modeData{}, err
+	}
+	return resp.Data, nil
+}
+
+func (c *client) deleteMode(ctx context.Context, modeID string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/modes/"+url.PathEscape(modeID), nil, true)
+	return err
+}
+
+func (c *client) setActiveMode(ctx context.Context, modeID string) error {
+	_, err := c.do(ctx, http.MethodPut, "/modes/active", map[string]string{
+		"modeId": modeID,
+	}, true)
+	return err
 }

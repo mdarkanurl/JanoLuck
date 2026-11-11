@@ -712,6 +712,278 @@ func TestClientProactiveRefreshUnauthorizedEndsSession(t *testing.T) {
 	}
 }
 
+func TestFilterModes(t *testing.T) {
+	modes := []modeData{
+		{ID: "a", Name: "Motivation", IsBuiltIn: true},
+		{ID: "b", Name: "Stoic"},
+		{ID: "c", Name: "Islamic", IsBuiltIn: true},
+	}
+
+	if got := filterModes(modes, ""); len(got) != 3 {
+		t.Fatalf("empty filter returned %d modes, want 3", len(got))
+	}
+	if got := filterModes(modes, "  "); len(got) != 3 {
+		t.Fatalf("blank filter returned %d modes, want 3", len(got))
+	}
+
+	got := filterModes(modes, "STO")
+	if len(got) != 1 || got[0].ID != "b" {
+		t.Fatalf("filter = %+v, want mode b", got)
+	}
+
+	if got := filterModes(modes, "zzz"); len(got) != 0 {
+		t.Fatalf("filter returned %d modes, want 0", len(got))
+	}
+}
+
+func TestModePickerShortcutsAndGuards(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newChatModel(c, meData{}, nil, nil, 80, 24)
+	m.modes = newModePicker("", 60)
+	m.modes.loading = false
+	m.modes.items = []modeData{
+		{ID: "builtin", Name: "Motivation", IsBuiltIn: true},
+		{ID: "custom", Name: "Stoic"},
+	}
+	m.modes.activeID = "builtin"
+
+	press := func(m chatModel, msg tea.KeyMsg) chatModel {
+		updated, _ := m.handleModesKey(msg)
+		return updated
+	}
+	key := func(value string) tea.KeyMsg {
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)}
+	}
+
+	// n opens the create form.
+	created := press(m, key("n"))
+	if created.modes.form == nil || created.modes.form.editing {
+		t.Fatalf("n should open an empty create form: %+v", created.modes.form)
+	}
+
+	// esc cancels the form and returns to the list.
+	cancelled := press(created, tea.KeyMsg{Type: tea.KeyEsc})
+	if cancelled.modes.form != nil {
+		t.Fatal("esc should close the mode form")
+	}
+
+	// Selecting the custom mode and pressing e pre-fills the edit form.
+	cancelled = press(cancelled, tea.KeyMsg{Type: tea.KeyDown})
+	edited := press(cancelled, key("e"))
+	if edited.modes.form == nil || !edited.modes.form.editing {
+		t.Fatalf("e should open an edit form: %+v", edited.modes.form)
+	}
+	if got := edited.modes.form.name.Value(); got != "Stoic" {
+		t.Fatalf("edit form name = %q, want Stoic", got)
+	}
+
+	// Built-in modes cannot be edited or deleted.
+	cancelled = press(edited, tea.KeyMsg{Type: tea.KeyEsc})
+	cancelled.modes.index = 0
+	builtinEdit := press(cancelled, key("e"))
+	if builtinEdit.modes.form != nil || builtinEdit.modes.err == "" {
+		t.Fatal("editing a built-in mode should be rejected")
+	}
+
+	cancelled.modes.err = ""
+	builtinDelete := press(cancelled, key("d"))
+	if builtinDelete.confirm != nil || builtinDelete.modes.err == "" {
+		t.Fatal("deleting a built-in mode should be rejected")
+	}
+
+	// Deleting a custom mode opens the confirmation dialog.
+	cancelled.modes.err = ""
+	cancelled.modes.index = 1
+	customDelete := press(cancelled, key("d"))
+	if customDelete.confirm == nil || customDelete.confirm.action != "delete_mode" {
+		t.Fatalf("delete confirmation = %+v, want delete_mode", customDelete.confirm)
+	}
+	if customDelete.confirm.modeID != "custom" {
+		t.Fatalf("delete mode id = %q, want custom", customDelete.confirm.modeID)
+	}
+
+	// / focuses the filter so n/e/d can be typed as part of a search.
+	filtering := press(m, key("/"))
+	if !filtering.modes.filtering {
+		t.Fatal("/ should focus the mode filter")
+	}
+	filtering, _ = filtering.handleModesKey(key("e"))
+	if got := filtering.modes.filter.Value(); got != "e" {
+		t.Fatalf("filter value = %q, want e", got)
+	}
+}
+
+func TestModeFormValidation(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newChatModel(c, meData{}, nil, nil, 80, 24)
+	m.modes = newModePicker("", 60)
+	m.modes.form = newModeForm(60)
+
+	empty, _ := m.saveModeForm()
+	if empty.modes.form.err == "" {
+		t.Fatal("an empty name should be rejected")
+	}
+
+	empty.modes.form.name.SetValue("Stoic")
+	missingPrompt, _ := empty.saveModeForm()
+	if missingPrompt.modes.form.err == "" {
+		t.Fatal("an empty prompt should be rejected")
+	}
+
+	missingPrompt.modes.form.prompt.SetValue("Be calm and practical.")
+	valid, cmd := missingPrompt.saveModeForm()
+	if valid.modes.form.err != "" {
+		t.Fatalf("valid form rejected: %s", valid.modes.form.err)
+	}
+	if !valid.modes.form.saving || cmd == nil {
+		t.Fatal("valid form should start saving")
+	}
+}
+
+func TestModeViewsRender(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newChatModel(c, meData{}, nil, nil, 80, 24)
+	m.modes = newModePicker("", m.pickerInnerWidth())
+	m.modes.loading = false
+	m.modes.items = []modeData{
+		{ID: "builtin", Name: "Motivation", IsBuiltIn: true},
+		{ID: "custom", Name: "Stoic"},
+	}
+	m.modes.activeID = "builtin"
+
+	view := m.View()
+	for _, want := range []string{"Prediction modes", "active:", "Motivation", "built-in", "Stoic", "custom", "n new"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("mode picker view missing %q:\n%s", want, view)
+		}
+	}
+
+	m.modes.form = newModeForm(m.pickerInnerWidth())
+	formView := m.View()
+	for _, want := range []string{"New mode", "Name", "Instructions", "save", "cancel"} {
+		if !strings.Contains(formView, want) {
+			t.Fatalf("mode form view missing %q:\n%s", want, formView)
+		}
+	}
+}
+
+func TestClientModeEndpoints(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+
+		if got := r.Header.Get("Authorization"); got != "Bearer test-access" {
+			t.Errorf("authorization = %q", got)
+		}
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/modes":
+			writeTestJSON(w, http.StatusOK, modeListResponse{
+				Message: "modes retrieved",
+				Data: modeListData{
+					Modes:        []modeData{{ID: "builtin", Name: "Motivation", IsBuiltIn: true}},
+					Page:         1,
+					Limit:        100,
+					Total:        1,
+					ActiveModeID: "builtin",
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/modes":
+			writeTestJSON(w, http.StatusCreated, modeResponse{
+				Message: "mode created",
+				Data:    modeData{ID: "m1", Name: "Stoic", Prompt: "Be calm."},
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/modes/m1":
+			writeTestJSON(w, http.StatusOK, modeResponse{
+				Message: "mode updated",
+				Data:    modeData{ID: "m1", Name: "Stoic", Prompt: "Be very calm."},
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/modes/active":
+			writeTestJSON(w, http.StatusOK, modeActionResponse{
+				Message: "active mode updated",
+				Data:    modeActionData{ModeID: "m1"},
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/modes/m1":
+			writeTestJSON(w, http.StatusOK, modeActionResponse{
+				Message: "mode deleted",
+				Data:    modeActionData{ModeID: "m1"},
+			})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c, err := newClient(server.URL)
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	c.creds.AccessToken = "test-access"
+
+	list, err := c.listModes(t.Context(), 1, 100)
+	if err != nil {
+		t.Fatalf("listModes: %v", err)
+	}
+	if list.ActiveModeID != "builtin" || len(list.Modes) != 1 {
+		t.Fatalf("listModes = %+v", list)
+	}
+
+	created, err := c.createMode(t.Context(), "Stoic", "Be calm.")
+	if err != nil {
+		t.Fatalf("createMode: %v", err)
+	}
+	if created.ID != "m1" {
+		t.Fatalf("created mode = %+v", created)
+	}
+
+	updated, err := c.updateMode(t.Context(), "m1", "Stoic", "Be very calm.")
+	if err != nil {
+		t.Fatalf("updateMode: %v", err)
+	}
+	if updated.Prompt != "Be very calm." {
+		t.Fatalf("updated mode = %+v", updated)
+	}
+
+	if err := c.setActiveMode(t.Context(), "m1"); err != nil {
+		t.Fatalf("setActiveMode: %v", err)
+	}
+	if err := c.deleteMode(t.Context(), "m1"); err != nil {
+		t.Fatalf("deleteMode: %v", err)
+	}
+
+	want := []string{
+		"GET /api/v1/modes",
+		"POST /api/v1/modes",
+		"PUT /api/v1/modes/m1",
+		"PUT /api/v1/modes/active",
+		"DELETE /api/v1/modes/m1",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls =\n%s\nwant\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 func writeTestJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
