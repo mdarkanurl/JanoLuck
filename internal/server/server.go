@@ -13,7 +13,6 @@ import (
 	"github.com/mdarkanurl/JanoLuck/internal/chats"
 	"github.com/mdarkanurl/JanoLuck/internal/config"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
-	"github.com/mdarkanurl/JanoLuck/internal/email"
 	"github.com/mdarkanurl/JanoLuck/internal/kafka"
 	"github.com/mdarkanurl/JanoLuck/internal/modes"
 	"github.com/mdarkanurl/JanoLuck/internal/sessions"
@@ -46,9 +45,6 @@ func New() *Server {
 		panic(err)
 	}
 
-	resendAPIKey := cfg.RESEND_API_KEY
-	emailServer := email.NewResendService(resendAPIKey)
-
 	dbQueries := database.New(db)
 	redisQueries := database.NewRedisClient(cfg.REDIS_ADDR, cfg.REDIS_PASSWORD, redisDB)
 	authRepo := auth.NewRepository(dbQueries, redisQueries)
@@ -76,7 +72,7 @@ func New() *Server {
 		producer = nil
 	}
 
-	authService := auth.AuthService(authRepo, emailServer, tokenService, producer)
+	authService := auth.AuthService(authRepo, tokenService, producer)
 	authHandler := auth.AuthHandler(authService)
 
 	usersRepo := users.NewRepository(dbQueries)

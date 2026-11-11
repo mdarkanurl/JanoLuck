@@ -25,7 +25,7 @@ func run() error {
 	consumer, err := kafka.NewConsumer(
 		kafka.ParseBrokers(cfg.KAFKA_BROKERS),
 		cfg.KAFKA_CONSUMER_GROUP,
-		[]string{email.VerificationTopic},
+		[]string{email.VerificationTopic, email.PasswordResetTopic},
 		kafka.WithConsumerClientID(cfg.KAFKA_CLIENT_ID+"-worker"),
 	)
 	if err != nil {
@@ -41,13 +41,13 @@ func run() error {
 	defer stop()
 
 	slog.Info("email worker started",
-		"topic", email.VerificationTopic,
+		"topics", []string{email.VerificationTopic, email.PasswordResetTopic},
 		"group", cfg.KAFKA_CONSUMER_GROUP,
 		"brokers", cfg.KAFKA_BROKERS,
 	)
 
 	if err := consumer.Run(ctx, func(ctx context.Context, msg kafka.Message) error {
-		return worker.Handle(ctx, msg.Value, msg.Timestamp)
+		return worker.Handle(ctx, msg.Topic, msg.Value, msg.Timestamp)
 	}); err != nil {
 		return err
 	}

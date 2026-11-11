@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	defaultMaxAttempts = 5
-	defaultRetryDelay  = time.Second
-	maxRetryDelay      = 30 * time.Second
-	defaultMaxAge      = 5 * time.Minute
+	defaultMaxAttempts         = 5
+	defaultRetryDelay          = time.Second
+	maxRetryDelay              = 30 * time.Second
+	defaultMaxAge              = 5 * time.Minute
+	defaultPasswordResetMaxAge = 10 * time.Minute
 )
 
 var ErrInvalidJob = errors.New("invalid email job")
@@ -25,11 +26,12 @@ type Sender interface {
 }
 
 type Worker struct {
-	sender      Sender
-	maxAttempts int
-	retryDelay  time.Duration
-	maxAge      time.Duration
-	logger      *slog.Logger
+	sender              Sender
+	maxAttempts         int
+	retryDelay          time.Duration
+	maxAge              time.Duration
+	passwordResetMaxAge time.Duration
+	logger              *slog.Logger
 }
 
 type WorkerOption func(*Worker)
@@ -56,6 +58,12 @@ func WithMaxAge(maxAge time.Duration) WorkerOption {
 	}
 }
 
+func WithPasswordResetMaxAge(maxAge time.Duration) WorkerOption {
+	return func(w *Worker) {
+		w.passwordResetMaxAge = maxAge
+	}
+}
+
 func WithWorkerLogger(logger *slog.Logger) WorkerOption {
 	return func(w *Worker) {
 		if logger != nil {
@@ -66,11 +74,12 @@ func WithWorkerLogger(logger *slog.Logger) WorkerOption {
 
 func NewWorker(sender Sender, opts ...WorkerOption) *Worker {
 	w := &Worker{
-		sender:      sender,
-		maxAttempts: defaultMaxAttempts,
-		retryDelay:  defaultRetryDelay,
-		maxAge:      defaultMaxAge,
-		logger:      slog.Default(),
+		sender:              sender,
+		maxAttempts:         defaultMaxAttempts,
+		retryDelay:          defaultRetryDelay,
+		maxAge:              defaultMaxAge,
+		passwordResetMaxAge: defaultPasswordResetMaxAge,
+		logger:              slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(w)
@@ -78,7 +87,7 @@ func NewWorker(sender Sender, opts ...WorkerOption) *Worker {
 	return w
 }
 
-func (w *Worker) Handle(ctx context.Context, payload []byte, publishedAt time.Time) error {
+func (w *Worker) Handle(ctx context.Context, topic string, payload []byte, publishedAt time.Time) error {
 	var job Job
 	if err := json.Unmarshal(payload, &job); err != nil {
 		return fmt.Errorf("%w: decode: %v", ErrInvalidJob, err)
@@ -87,12 +96,14 @@ func (w *Worker) Handle(ctx context.Context, payload []byte, publishedAt time.Ti
 		return fmt.Errorf("%w: %v", ErrInvalidJob, err)
 	}
 
-	if !publishedAt.IsZero() && w.maxAge > 0 && time.Since(publishedAt) > w.maxAge {
+	maxAge := w.maxAgeFor(topic)
+	if !publishedAt.IsZero() && maxAge > 0 && time.Since(publishedAt) > maxAge {
 		w.logger.Warn("skipping stale email job",
+			"topic", topic,
 			"to", job.To,
 			"subject", job.Subject,
 			"published_at", publishedAt,
-			"max_age", w.maxAge,
+			"max_age", maxAge,
 		)
 		return nil
 	}
@@ -129,6 +140,13 @@ func (w *Worker) Handle(ctx context.Context, payload []byte, publishedAt time.Ti
 	}
 
 	return fmt.Errorf("send email to %q after %d attempts: %w", job.To, w.maxAttempts, lastErr)
+}
+
+func (w *Worker) maxAgeFor(topic string) time.Duration {
+	if topic == PasswordResetTopic {
+		return w.passwordResetMaxAge
+	}
+	return w.maxAge
 }
 
 func (w *Worker) retryDelayFor(attempt int) time.Duration {

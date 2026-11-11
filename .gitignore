@@ -1,6 +1,7 @@
 # binaries
 server
 /cli
+/worker
 *.exe
 *.test
 *.out

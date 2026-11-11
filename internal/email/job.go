@@ -1,6 +1,9 @@
 package email
 
-const VerificationTopic = "email.verification"
+const (
+	VerificationTopic  = "email.verification"
+	PasswordResetTopic = "email.password_reset"
+)
 
 type Job struct {
 	To      string `json:"to"`

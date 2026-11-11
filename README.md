@@ -115,10 +115,11 @@ unavailable at startup the app keeps running; delivery failures are returned
 from `Produce` and `Close`. Use `ProduceRaw` for pre-encoded payloads and
 headers.
 
-Signup verification emails are published to `email.verification` as JSON jobs
-(`{"to","subject","body"}`). The `cmd/worker` process consumes that topic and
-delivers the email. Signup returns an internal error if the job cannot be
-published, so keep the worker running alongside the API.
+Signup verification and password reset emails are published to
+`email.verification` and `email.password_reset` as JSON jobs
+(`{"to","subject","body"}`). The `cmd/worker` process consumes both topics and
+delivers the emails. The API returns an internal error if a job cannot be
+published, so keep the worker running alongside it.
 
 `confluent-kafka-go` uses cgo and bundles librdkafka, so builds need `CGO_ENABLED=1`
 and a C toolchain. Dependencies are vendored; run `go mod tidy && go mod vendor`
@@ -126,7 +127,8 @@ after changing them.
 
 ## Email worker
 
-The worker consumes verification email jobs and sends them through Resend:
+The worker consumes verification and password reset email jobs and sends them
+through Resend:
 
 ```bash
 go run ./cmd/worker
@@ -135,10 +137,10 @@ go run ./cmd/worker
 It uses `KAFKA_BROKERS`, `KAFKA_CONSUMER_GROUP` (default
 `janoluck-email-worker`) and `RESEND_API_KEY`. Offsets are committed manually
 after each message. Sends are retried up to 5 times with exponential backoff;
-malformed jobs and jobs older than 5 minutes (the signup verification TTL) are
-logged and skipped, and sends that still fail after the final attempt are logged
-and skipped. Stop it with `ctrl+c` or `SIGTERM`; in-flight work is left
-uncommitted for redelivery.
+malformed jobs are skipped, verification jobs older than 5 minutes and password
+reset jobs older than 10 minutes are skipped, and sends that still fail after
+the final attempt are logged and skipped. Stop it with `ctrl+c` or `SIGTERM`;
+in-flight work is left uncommitted for redelivery.
 
 ## Running
 

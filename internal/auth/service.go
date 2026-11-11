@@ -29,14 +29,13 @@ var (
 )
 
 type Service struct {
-	repo        *Repository
-	emailServer *emailpkg.Email
-	tokens      *TokenService
-	producer    *kafka.Producer
+	repo     *Repository
+	tokens   *TokenService
+	producer *kafka.Producer
 }
 
-func AuthService(repo *Repository, emailService *emailpkg.Email, tokens *TokenService, producer *kafka.Producer) *Service {
-	return &Service{repo: repo, emailServer: emailService, tokens: tokens, producer: producer}
+func AuthService(repo *Repository, tokens *TokenService, producer *kafka.Producer) *Service {
+	return &Service{repo: repo, tokens: tokens, producer: producer}
 }
 
 func hashCode(code int) string {
@@ -219,6 +218,10 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 		return nil
 	}
 
+	if s.producer == nil {
+		return fmt.Errorf("%w: kafka producer is not configured", ErrInternal)
+	}
+
 	n, err := rand.Int(rand.Reader, big.NewInt(900000))
 	if err != nil {
 		return fmt.Errorf("%w: generate reset code: %v", ErrInternal, err)
@@ -229,9 +232,18 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 		return err
 	}
 
-	// TODO use here asynchronous job processing
-	if err := s.emailServer.Send(email, "reset your password", "here is your password reset code:"+strconv.Itoa(rawCode)); err != nil {
-		return fmt.Errorf("%w: send reset code: %v", ErrInternal, err)
+	job := emailpkg.Job{
+		To:      email,
+		Subject: "reset your password",
+		Body:    "here is your password reset code:" + strconv.Itoa(rawCode),
+	}
+
+	publishCtx, cancel := context.WithTimeout(ctx, kafkaPublishTimeout)
+	defer cancel()
+
+	if err := s.producer.Produce(publishCtx, emailpkg.PasswordResetTopic, job.To, job); err != nil {
+		_ = s.repo.DeletePasswordReset(ctx, email)
+		return fmt.Errorf("%w: enqueue password reset email: %v", ErrInternal, err)
 	}
 
 	return nil
