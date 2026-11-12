@@ -10,12 +10,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
+	"github.com/mdarkanurl/JanoLuck/internal/outbox"
 )
 
 var (
-	ErrInvalidInput = errors.New("invalid input")
-	ErrInternal     = errors.New("something went wrong")
-	ErrNotFound     = errors.New("session not found")
+	ErrInvalidInput      = errors.New("invalid input")
+	ErrInternal          = errors.New("something went wrong")
+	ErrNotFound          = errors.New("session not found")
+	ErrSummaryNotFound   = errors.New("session summary not found")
+	ErrInvalidSummaryJob = errors.New("invalid session summary job")
 )
 
 type Publisher interface {
@@ -26,6 +29,7 @@ type Service struct {
 	repo     *Repository
 	titles   TitleGenerator
 	producer Publisher
+	store    *outbox.Repository
 	logger   *slog.Logger
 }
 
@@ -35,6 +39,14 @@ func WithProducer(producer Publisher) ServiceOption {
 	return func(s *Service) {
 		if producer != nil {
 			s.producer = producer
+		}
+	}
+}
+
+func WithEventStore(store *outbox.Repository) ServiceOption {
+	return func(s *Service) {
+		if store != nil {
+			s.store = store
 		}
 	}
 }
@@ -76,7 +88,7 @@ func (s *Service) CreateSession(ctx context.Context, userIDStr, content string) 
 
 	name := fallbackSessionName(content)
 
-	if s.producer == nil {
+	if s.producer == nil && s.store == nil {
 		if s.titles != nil {
 			generated, genErr := s.titles.GenerateSessionNameContext(ctx, content)
 			if genErr != nil {
@@ -98,15 +110,26 @@ func (s *Service) CreateSession(ctx context.Context, userIDStr, content string) 
 }
 
 func (s *Service) enqueueTitle(ctx context.Context, session database.Session, content string) {
-	if s.producer == nil {
-		return
-	}
-
 	sessionID := session.ID.String()
 	job := TitleJob{
 		SessionID: sessionID,
 		UserID:    session.Userid.String(),
 		Content:   content,
+	}
+
+	if s.store != nil {
+		if err := s.store.Enqueue(ctx, TitleTopic, sessionID, job, nil); err != nil {
+			s.logger.Warn(
+				"could not enqueue session title job; keeping fallback name",
+				"session_id", sessionID,
+				"error", err,
+			)
+		}
+		return
+	}
+
+	if s.producer == nil {
+		return
 	}
 
 	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titlePublishTimeout)

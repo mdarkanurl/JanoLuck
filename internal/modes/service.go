@@ -2,12 +2,18 @@ package modes
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/mdarkanurl/JanoLuck/internal/analytics"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
+	"github.com/mdarkanurl/JanoLuck/internal/moderation"
+	"github.com/mdarkanurl/JanoLuck/internal/outbox"
 )
 
 var (
@@ -18,8 +24,43 @@ var (
 	ErrForbidden     = errors.New("built-in modes cannot be modified")
 )
 
+type Publisher interface {
+	Produce(ctx context.Context, topic, key string, value any) error
+	ProduceAsync(ctx context.Context, topic, key string, value any) error
+	ProduceRawAsync(ctx context.Context, topic string, key, value []byte, headers map[string]string) error
+}
+
 type Service struct {
-	repo *Repository
+	repo     *Repository
+	producer Publisher
+	store    *outbox.Repository
+	logger   *slog.Logger
+}
+
+type ServiceOption func(*Service)
+
+func WithProducer(producer Publisher) ServiceOption {
+	return func(s *Service) {
+		if producer != nil {
+			s.producer = producer
+		}
+	}
+}
+
+func WithEventStore(store *outbox.Repository) ServiceOption {
+	return func(s *Service) {
+		if store != nil {
+			s.store = store
+		}
+	}
+}
+
+func WithLogger(logger *slog.Logger) ServiceOption {
+	return func(s *Service) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
 }
 
 const (
@@ -27,6 +68,8 @@ const (
 	DefaultLimit = 20
 	MaxPage      = 1_000_000
 	MaxLimit     = 100
+
+	publishTimeout = 5 * time.Second
 )
 
 type ListResult struct {
@@ -35,8 +78,15 @@ type ListResult struct {
 	ActiveModeID uuid.UUID
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *Repository, opts ...ServiceOption) *Service {
+	s := &Service{
+		repo:   repo,
+		logger: slog.Default(),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *Service) CreateMode(ctx context.Context, userIDStr, name, prompt string) (database.Mode, error) {
@@ -45,9 +95,44 @@ func (s *Service) CreateMode(ctx context.Context, userIDStr, name, prompt string
 		return database.Mode{}, err
 	}
 
-	// TODO validate the user's given mode by the LLM
+	build := func(mode database.Mode) []outbox.Event {
+		return []outbox.Event{
+			{
+				Topic: moderation.Topic,
+				Key:   mode.ID.String(),
+				Payload: moderation.Job{
+					Kind:    moderation.KindMode,
+					ID:      mode.ID.String(),
+					UserID:  userID.String(),
+					Content: strings.TrimSpace(name + "\n" + prompt),
+				},
+			},
+			{
+				Topic: analytics.Topic,
+				Key:   userID.String(),
+				Payload: analytics.Event{
+					Type:   "mode.created",
+					UserID: userID.String(),
+					ModeID: mode.ID.String(),
+				},
+			},
+		}
+	}
 
-	return s.repo.CreateMode(ctx, userID, name, prompt)
+	if s.store != nil {
+		return s.repo.CreateModeWithEvents(ctx, userID, name, prompt, build)
+	}
+
+	mode, err := s.repo.CreateMode(ctx, userID, name, prompt)
+	if err != nil {
+		return database.Mode{}, err
+	}
+
+	for _, event := range build(mode) {
+		s.emit(ctx, event)
+	}
+
+	return mode, nil
 }
 
 func (s *Service) ListModes(ctx context.Context, userIDStr string, page, limit int) (ListResult, error) {
@@ -108,7 +193,44 @@ func (s *Service) UpdateMode(ctx context.Context, userIDStr, modeIDStr, name, pr
 		return database.Mode{}, ErrForbidden
 	}
 
-	return s.repo.UpdateMode(ctx, modeID, userID, name, prompt)
+	build := func(mode database.Mode) []outbox.Event {
+		return []outbox.Event{
+			{
+				Topic: moderation.Topic,
+				Key:   modeID.String(),
+				Payload: moderation.Job{
+					Kind:    moderation.KindMode,
+					ID:      modeID.String(),
+					UserID:  userID.String(),
+					Content: strings.TrimSpace(name + "\n" + prompt),
+				},
+			},
+			{
+				Topic: analytics.Topic,
+				Key:   userID.String(),
+				Payload: analytics.Event{
+					Type:   "mode.updated",
+					UserID: userID.String(),
+					ModeID: modeID.String(),
+				},
+			},
+		}
+	}
+
+	if s.store != nil {
+		return s.repo.UpdateModeWithEvents(ctx, modeID, userID, name, prompt, build)
+	}
+
+	updated, err := s.repo.UpdateMode(ctx, modeID, userID, name, prompt)
+	if err != nil {
+		return database.Mode{}, err
+	}
+
+	for _, event := range build(updated) {
+		s.emit(ctx, event)
+	}
+
+	return updated, nil
 }
 
 func (s *Service) DeleteMode(ctx context.Context, userIDStr, modeIDStr string) error {
@@ -153,6 +275,36 @@ func (s *Service) ClearActiveMode(ctx context.Context, userIDStr string) error {
 	}
 
 	return s.repo.ClearActiveMode(ctx, userID)
+}
+
+func (s *Service) emit(ctx context.Context, event outbox.Event) {
+	if s.store != nil {
+		if err := s.store.Enqueue(ctx, event.Topic, event.Key, event.Payload, event.Headers); err != nil {
+			s.logger.Warn("could not enqueue mode event", "topic", event.Topic, "key", event.Key, "error", err)
+		}
+		return
+	}
+
+	s.publishAsync(ctx, event.Topic, event.Key, event.Payload, event.Headers)
+}
+
+func (s *Service) publishAsync(ctx context.Context, topic, key string, value any, headers map[string]string) {
+	if s.producer == nil {
+		return
+	}
+
+	payload, err := json.Marshal(value)
+	if err != nil {
+		s.logger.Warn("could not encode mode event", "topic", topic, "key", key, "error", err)
+		return
+	}
+
+	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
+	defer cancel()
+
+	if err := s.producer.ProduceRawAsync(publishCtx, topic, []byte(key), payload, headers); err != nil {
+		s.logger.Warn("could not publish mode event", "topic", topic, "key", key, "error", err)
+	}
 }
 
 func parseIDs(userIDStr, modeIDStr, field string) (uuid.UUID, uuid.UUID, error) {

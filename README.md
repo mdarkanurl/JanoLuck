@@ -35,6 +35,24 @@ selected but not edited or deleted. `GET /api/v1/modes` supports `page` and
 `limit` query parameters (`page` defaults to `1`, `limit` defaults to `20`, max
 `100` per page).
 
+## Streaming predictions
+
+`POST /api/v1/sessions/{sessionID}/chats/stream` stores the message and streams
+the prediction back as server-sent events, so the reply can be shown while it is
+still being written. `POST /api/v1/sessions/{sessionID}/chats` keeps working
+and returns the whole prediction in one response.
+
+Every event is a `data:` line holding a JSON object:
+
+| Type | Payload | Meaning |
+| --- | --- | --- |
+| `delta` | `{"type":"delta","content":"..."}` | A fragment of the prediction |
+| `done` | `{"type":"done","chat":{...}}` | The stored reply |
+| `error` | `{"type":"error","error":"..."}` | The prediction failed |
+
+The terminal app uses the streaming endpoint and falls back to the regular one
+when the server does not offer it.
+
 ## Tech Stack
 
 - Go 1.27
@@ -50,15 +68,26 @@ selected but not edited or deleted. `GET /api/v1/modes` supports `page` and
 
 ```
 cmd/cli/               # terminal chat app (Bubble Tea)
-cmd/worker/            # Kafka worker (email delivery + session titles)
+cmd/worker/            # Kafka worker (email, notifications, audit, analytics, LLM jobs)
+cmd/embedding-backfill/ # re-queues chat embeddings for backfill
+cmd/kafka-topics/      # creates the Kafka topics used by the app
 internal/
+  analytics/           # Analytics event schema and consumer
+  audit/               # Audit log repository and consumer
   auth/                # Authentication (handlers, service, middleware, tokens)
+  chats/               # Chat handlers, service, repository
+  embeddings/          # Async chat-embedding worker and repository
+  moderation/          # Content moderation worker and repository
+  notifications/       # Auth-event to email notification worker
+  outbox/              # Transactional outbox repository and relay
+  sessions/            # Sessions, async titles and async summaries
+  topics/              # Canonical topic list
   users/               # User profiles (handlers, service, repository)
   modes/               # Prediction modes (handlers, service, repository)
   config/              # Environment configuration
   database/            # Generated sqlc code
   email/               # Email service and worker
-  kafka/               # Kafka producer and consumer
+  kafka/               # Kafka producer, consumer and admin client
 sql/
   schema/              # Goose migration files
   queries/             # SQL queries
@@ -119,9 +148,13 @@ headers.
 
 Signup verification and password reset emails are published to
 `email.verification` and `email.password_reset` as JSON jobs
-(`{"to","subject","body"}`). The `cmd/worker` process consumes both topics and
-delivers the emails. The API returns an internal error if a job cannot be
-published, so keep the worker running alongside it.
+(`{"to","subject","body"}`). Auth lifecycle events also publish to
+`user.registered`, `user.password_changed`, `user.password_reset`,
+`auth.login_succeeded` and `auth.logout`; the worker turns the first three into
+welcome/security emails on `email.notification`, records every event in the
+`audit_log` table, and logs them as analytics. Chat, mode and profile actions
+publish to `analytics.events`. The API returns an internal error if a critical
+email job cannot be published, so keep the worker running alongside it.
 
 Session titles are generated asynchronously. `POST /api/v1/sessions` inserts the
 session immediately with a fallback name derived from the first message and
@@ -130,13 +163,46 @@ worker calls the LLM and renames the row, so the request no longer waits for the
 model. If Kafka is not configured the API falls back to generating the title
 inline; a failed publish keeps the fallback name.
 
+Every tenth chat in a session publishes `session.summary.requested`
+(`{"session_id","user_id"}`). The worker summarizes the latest messages and
+stores the result in `session_summaries`; the next prediction prepends that
+summary to the retrieved chat context so long sessions keep their thread.
+
+User chats are also published to `moderation.requested`
+(`{"kind","id","user_id","content"}`) and modes to the same topic with
+`kind="mode"`. The worker classifies the content and stores
+`moderation_status`/`moderation_reason`; blocked modes disappear from list,
+get and active-mode queries, while blocked chats remain visible but flagged.
+Chat edits publish `chat.embedding.requested` so the stored vector is refreshed
+off the request path. `go run ./cmd/embedding-backfill` re-queues embeddings for
+chats that have a `NULL` embedding (`-all` re-embeds everything).
+
+The `outbox` table and `internal/outbox` relay provide an at-least-once path for
+events that must be written in the same database transaction as the state
+change. Chat, mode and user services write their moderation, embedding and
+analytics events through the outbox inside the transaction that stores the row,
+so a Kafka outage never loses them. The worker drains unpublished rows every two
+seconds, publishes them with their stored headers and marks them published;
+rows that fail to publish stay pending for the next tick.
+
+Provision the topics explicitly before starting the workers:
+
+```bash
+go run ./cmd/kafka-topics -partitions 3
+```
+
+The worker also tries to create them on startup and falls back to broker
+auto-creation when the admin client is unavailable.
+
 Consumers retry a failing handler three times with exponential backoff and then
 park the message on `<topic>.dlq` (payload preserved, with `x-original-topic`,
 `x-original-partition`, `x-original-offset` and `x-error` headers). Offsets are
 only committed once the message succeeds or reaches the dead-letter topic. Set
 the publisher with `kafka.WithDeadLetterPublisher`; without it failed messages
 are logged and dropped. `kafka.WithMaxAttempts` and `kafka.WithRetryBackoff`
-tune the retry policy.
+tune the retry policy. Every JSON message carries `content_type` and
+`schema_version` headers, and `ProduceAsync` reports delivery failures through
+the producer logger without blocking the request.
 
 `confluent-kafka-go` uses cgo and bundles librdkafka, so builds need `CGO_ENABLED=1`
 and a C toolchain. Dependencies are vendored; run `go mod tidy && go mod vendor`
@@ -144,12 +210,23 @@ after changing them.
 
 ## Worker
 
-The worker consumes email jobs and session title requests in separate consumer
-groups, so slow LLM calls never delay email delivery:
+The worker runs one consumer per concern so slow LLM calls never delay email
+delivery:
 
 ```bash
 go run ./cmd/worker
 ```
+
+| Consumer | Group | Topics |
+| --- | --- | --- |
+| email | `KAFKA_CONSUMER_GROUP` | `email.verification`, `email.password_reset`, `email.notification` |
+| session title | `KAFKA_SESSION_CONSUMER_GROUP` | `session.title.requested` |
+| session summary | `KAFKA_SESSION_CONSUMER_GROUP` | `session.summary.requested` |
+| notifications | `<KAFKA_CLIENT_ID>-notifications` | auth/user events |
+| audit | `<KAFKA_CLIENT_ID>-audit` | auth/user events |
+| analytics | `<KAFKA_CLIENT_ID>-analytics` | `analytics.events` |
+| embeddings | `<KAFKA_CLIENT_ID>-embedding` | `chat.embedding.requested` |
+| moderation | `<KAFKA_CLIENT_ID>-moderation` | `moderation.requested` |
 
 It uses `KAFKA_BROKERS`, `KAFKA_CONSUMER_GROUP` (default
 `janoluck-email-worker`), `KAFKA_SESSION_CONSUMER_GROUP` (default
@@ -159,10 +236,12 @@ retried up to 5 times with exponential backoff; malformed jobs are sent to the
 dead-letter topic, verification jobs older than 5 minutes and password reset
 jobs older than 10 minutes are skipped, and sends that still fail after the
 final attempt are dead-lettered. Stale session title requests (older than 10
-minutes) and titles for deleted sessions are skipped. If the database is
-unreachable at startup, the worker logs a warning and runs only the email
-consumer; restart it once Postgres is back so title jobs are picked up. Stop it
-with `ctrl+c` or `SIGTERM`; in-flight work is left uncommitted for redelivery.
+minutes) and titles for deleted sessions are skipped. The outbox relay runs
+alongside the consumers and republishes any row that failed to deliver. If the
+database is unreachable at startup, the worker logs a warning and runs only the
+email and analytics consumers; restart it once Postgres is back so the other
+consumers and the outbox relay start. Stop it with `ctrl+c` or `SIGTERM`;
+in-flight work is left uncommitted for redelivery.
 
 ## Running
 

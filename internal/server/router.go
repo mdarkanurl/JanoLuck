@@ -54,6 +54,7 @@ func NewRouter(
 			r.Delete("/sessions/{sessionID}", sessionsHandler.DeleteSession)
 
 			r.Post("/sessions/{sessionID}/chats", chatsHandler.CreateChat)
+			r.Post("/sessions/{sessionID}/chats/stream", chatsHandler.CreateChatStream)
 			r.Get("/sessions/{sessionID}/chats", chatsHandler.ListChats)
 
 			r.Post("/modes", modesHandler.CreateMode)

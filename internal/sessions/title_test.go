@@ -43,6 +43,14 @@ func (f *fakePublisher) Produce(_ context.Context, topic, key string, value any)
 	return f.err
 }
 
+func (f *fakePublisher) ProduceAsync(_ context.Context, topic, key string, value any) error {
+	f.calls++
+	f.topic = topic
+	f.key = key
+	f.value = value
+	return f.err
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

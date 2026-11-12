@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
+	"github.com/mdarkanurl/JanoLuck/internal/outbox"
 )
 
 type Repository struct {
@@ -44,6 +45,39 @@ func (r *Repository) CreateChat(ctx context.Context, sessionID, userID uuid.UUID
 	}
 
 	return newChat(row.ID, row.Sessionid, row.Userid, row.Role, row.Content, row.CreateAt, row.UpdateAt), nil
+}
+
+func (r *Repository) CreateChatWithEvents(ctx context.Context, sessionID, userID uuid.UUID, role, content string, embedding interface{}, build func(Chat) []outbox.Event) (Chat, error) {
+	var chat Chat
+
+	err := r.db.InTx(ctx, func(q *database.Queries) error {
+		row, err := q.CreateChat(ctx, database.CreateChatParams{
+			Sessionid: uuid.NullUUID{UUID: sessionID, Valid: true},
+			Userid:    uuid.NullUUID{UUID: userID, Valid: true},
+			Role:      sql.NullString{String: role, Valid: true},
+			Content:   content,
+			Embedding: embedding,
+		})
+		if err != nil {
+			return fmt.Errorf("%w: db CreateChat: %v", ErrInternal, err)
+		}
+
+		chat = newChat(row.ID, row.Sessionid, row.Userid, row.Role, row.Content, row.CreateAt, row.UpdateAt)
+
+		store := outbox.NewRepository(q)
+		for _, event := range build(chat) {
+			if err := store.Enqueue(ctx, event.Topic, event.Key, event.Payload, event.Headers); err != nil {
+				return fmt.Errorf("%w: %v", ErrInternal, err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return Chat{}, err
+	}
+
+	return chat, nil
 }
 
 func (r *Repository) ListChatsBySessionID(ctx context.Context, sessionID, userID uuid.UUID, limit, offset int) ([]Chat, error) {
@@ -135,6 +169,41 @@ func (r *Repository) UpdateChatContent(ctx context.Context, chatID, userID uuid.
 	return newChat(row.ID, row.Sessionid, row.Userid, row.Role, row.Content, row.CreateAt, row.UpdateAt), nil
 }
 
+func (r *Repository) UpdateChatContentWithEvents(ctx context.Context, chatID, userID uuid.UUID, content string, build func(Chat) []outbox.Event) (Chat, error) {
+	var chat Chat
+
+	err := r.db.InTx(ctx, func(q *database.Queries) error {
+		row, err := q.UpdateChatContent(ctx, database.UpdateChatContentParams{
+			ID:       chatID,
+			Userid:   uuid.NullUUID{UUID: userID, Valid: true},
+			Content:  content,
+			UpdateAt: time.Now().UTC(),
+		})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("%w: db UpdateChatContent: %v", ErrInternal, err)
+		}
+
+		chat = newChat(row.ID, row.Sessionid, row.Userid, row.Role, row.Content, row.CreateAt, row.UpdateAt)
+
+		store := outbox.NewRepository(q)
+		for _, event := range build(chat) {
+			if err := store.Enqueue(ctx, event.Topic, event.Key, event.Payload, event.Headers); err != nil {
+				return fmt.Errorf("%w: %v", ErrInternal, err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return Chat{}, err
+	}
+
+	return chat, nil
+}
+
 func (r *Repository) DeleteChat(ctx context.Context, chatID, userID uuid.UUID) error {
 	deleted, err := r.db.DeleteChat(ctx, database.DeleteChatParams{
 		ID:     chatID,
@@ -151,7 +220,18 @@ func (r *Repository) DeleteChat(ctx context.Context, chatID, userID uuid.UUID) e
 	return nil
 }
 
-// newChat unwraps the nullable columns produced by sqlc into the domain type.
+func (r *Repository) GetSessionSummary(ctx context.Context, sessionID uuid.UUID) (string, error) {
+	row, err := r.db.GetSessionSummary(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("%w: db GetSessionSummary: %v", ErrInternal, err)
+	}
+
+	return row.Summary, nil
+}
+
 func newChat(id uuid.UUID, sessionID, userID uuid.NullUUID, role sql.NullString, content string, createdAt, updatedAt time.Time) Chat {
 	return Chat{
 		ID:        id,

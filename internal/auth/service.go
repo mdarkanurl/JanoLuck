@@ -8,12 +8,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strconv"
 	"time"
 
+	"github.com/mdarkanurl/JanoLuck/internal/analytics"
 	emailpkg "github.com/mdarkanurl/JanoLuck/internal/email"
 	"github.com/mdarkanurl/JanoLuck/internal/kafka"
+	"github.com/mdarkanurl/JanoLuck/internal/outbox"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -32,10 +35,73 @@ type Service struct {
 	repo     *Repository
 	tokens   *TokenService
 	producer *kafka.Producer
+	store    *outbox.Repository
 }
 
-func AuthService(repo *Repository, tokens *TokenService, producer *kafka.Producer) *Service {
-	return &Service{repo: repo, tokens: tokens, producer: producer}
+func AuthService(repo *Repository, tokens *TokenService, producer *kafka.Producer, opts ...ServiceOption) *Service {
+	s := &Service{repo: repo, tokens: tokens, producer: producer}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+type ServiceOption func(*Service)
+
+func WithEventStore(store *outbox.Repository) ServiceOption {
+	return func(s *Service) {
+		if store != nil {
+			s.store = store
+		}
+	}
+}
+
+func (s *Service) publishEvent(ctx context.Context, topic string, event UserEvent) {
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = time.Now().UTC()
+	}
+
+	if s.store != nil {
+		if err := s.store.Enqueue(ctx, topic, event.UserID, event, nil); err != nil {
+			s.logEventFailure(ctx, topic, event.UserID, err)
+		}
+		return
+	}
+
+	if s.producer == nil {
+		return
+	}
+	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), eventPublishTimeout)
+	defer cancel()
+	_ = s.producer.Produce(publishCtx, topic, event.UserID, event)
+}
+
+func (s *Service) recordAnalytics(ctx context.Context, event analytics.Event) {
+	if s.store != nil {
+		key := event.UserID
+		if key == "" {
+			key = event.Type
+		}
+		if err := s.store.Enqueue(ctx, analytics.Topic, key, event, nil); err != nil {
+			s.logEventFailure(ctx, analytics.Topic, key, err)
+		}
+		return
+	}
+
+	if s.producer == nil {
+		return
+	}
+	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), eventPublishTimeout)
+	defer cancel()
+	analytics.Record(publishCtx, s.producer, event)
+}
+
+func (s *Service) logEventFailure(ctx context.Context, topic, key string, err error) {
+	slog.Warn("could not enqueue auth event",
+		"topic", topic,
+		"key", key,
+		"error", err,
+	)
 }
 
 func hashCode(code int) string {
@@ -130,6 +196,15 @@ func (s *Service) VerifyEmail(ctx context.Context, email string, code int) (*Aut
 		return nil, err
 	}
 
+	s.publishEvent(ctx, UserRegisteredTopic, UserEvent{
+		UserID: user.ID.String(),
+		Email:  user.Email,
+	})
+	s.recordAnalytics(ctx, analytics.Event{
+		Type:   "user.registered",
+		UserID: user.ID.String(),
+	})
+
 	return tokens, nil
 }
 
@@ -171,7 +246,21 @@ func (s *Service) Login(ctx context.Context, email, password string) (*AuthToken
 		return nil, ErrInvalidCredentials
 	}
 
-	return s.mintTokenPair(ctx, user.ID.String(), user.Email, "")
+	tokens, err := s.mintTokenPair(ctx, user.ID.String(), user.Email, "")
+	if err != nil {
+		return nil, err
+	}
+
+	s.publishEvent(ctx, LoginSucceededTopic, UserEvent{
+		UserID: user.ID.String(),
+		Email:  user.Email,
+	})
+	s.recordAnalytics(ctx, analytics.Event{
+		Type:   "auth.login_succeeded",
+		UserID: user.ID.String(),
+	})
+
+	return tokens, nil
 }
 
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (*AuthTokens, error) {
@@ -277,6 +366,15 @@ func (s *Service) ResetPassword(ctx context.Context, email string, code int, new
 	_ = s.repo.DeletePasswordReset(ctx, email)
 	_ = s.repo.RevokeRefreshTokensForUser(ctx, user.ID.String())
 
+	s.publishEvent(ctx, UserPasswordResetTopic, UserEvent{
+		UserID: user.ID.String(),
+		Email:  user.Email,
+	})
+	s.recordAnalytics(ctx, analytics.Event{
+		Type:   "user.password_reset",
+		UserID: user.ID.String(),
+	})
+
 	return nil
 }
 
@@ -305,10 +403,26 @@ func (s *Service) ChangePassword(ctx context.Context, userID, userEmail, current
 
 	_ = s.repo.RevokeRefreshTokensForUser(ctx, user.ID.String())
 
+	s.publishEvent(ctx, UserPasswordChangedTopic, UserEvent{
+		UserID: userID,
+		Email:  userEmail,
+	})
+	s.recordAnalytics(ctx, analytics.Event{
+		Type:   "user.password_changed",
+		UserID: userID,
+	})
+
 	return nil
 }
 
 func (s *Service) Logout(ctx context.Context, userID string) error {
 	_ = s.repo.RevokeRefreshTokensForUser(ctx, userID)
+
+	s.publishEvent(ctx, LogoutTopic, UserEvent{UserID: userID})
+	s.recordAnalytics(ctx, analytics.Event{
+		Type:   "auth.logout",
+		UserID: userID,
+	})
+
 	return nil
 }

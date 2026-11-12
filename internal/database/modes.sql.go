@@ -7,6 +7,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +29,8 @@ func (q *Queries) ClearActiveMode(ctx context.Context, userid uuid.UUID) (int64,
 const countModesByUserID = `-- name: CountModesByUserID :one
 SELECT COUNT(*)
 FROM modes
-WHERE userId = $1 OR isBuiltIn = TRUE
+WHERE (userId = $1 OR isBuiltIn = TRUE)
+  AND moderation_status <> 'blocked'
 `
 
 func (q *Queries) CountModesByUserID(ctx context.Context, userid uuid.NullUUID) (int64, error) {
@@ -41,7 +43,7 @@ func (q *Queries) CountModesByUserID(ctx context.Context, userid uuid.NullUUID) 
 const createMode = `-- name: CreateMode :one
 INSERT INTO modes (userId, name, prompt)
 VALUES ($1, $2, $3)
-RETURNING id, userId, name, prompt, isBuiltIn, create_at, update_at
+RETURNING id, userId, name, prompt, isBuiltIn, create_at, update_at, moderation_status, moderation_reason
 `
 
 type CreateModeParams struct {
@@ -61,6 +63,8 @@ func (q *Queries) CreateMode(ctx context.Context, arg CreateModeParams) (Mode, e
 		&i.Isbuiltin,
 		&i.CreateAt,
 		&i.UpdateAt,
+		&i.ModerationStatus,
+		&i.ModerationReason,
 	)
 	return i, err
 }
@@ -84,10 +88,11 @@ func (q *Queries) DeleteMode(ctx context.Context, arg DeleteModeParams) (int64, 
 }
 
 const getActiveModeByUserID = `-- name: GetActiveModeByUserID :one
-SELECT m.id, m.userId, m.name, m.prompt, m.isBuiltIn, m.create_at, m.update_at
+SELECT m.id, m.userId, m.name, m.prompt, m.isBuiltIn, m.create_at, m.update_at, m.moderation_status, m.moderation_reason
 FROM user_active_modes uam
 JOIN modes m ON m.id = uam.modeId
 WHERE uam.userId = $1
+  AND m.moderation_status <> 'blocked'
 `
 
 func (q *Queries) GetActiveModeByUserID(ctx context.Context, userid uuid.UUID) (Mode, error) {
@@ -101,14 +106,17 @@ func (q *Queries) GetActiveModeByUserID(ctx context.Context, userid uuid.UUID) (
 		&i.Isbuiltin,
 		&i.CreateAt,
 		&i.UpdateAt,
+		&i.ModerationStatus,
+		&i.ModerationReason,
 	)
 	return i, err
 }
 
 const getModeByID = `-- name: GetModeByID :one
-SELECT id, userId, name, prompt, isBuiltIn, create_at, update_at
+SELECT id, userId, name, prompt, isBuiltIn, create_at, update_at, moderation_status, moderation_reason
 FROM modes
 WHERE id = $1 AND (userId = $2 OR isBuiltIn = TRUE)
+  AND moderation_status <> 'blocked'
 `
 
 type GetModeByIDParams struct {
@@ -127,14 +135,17 @@ func (q *Queries) GetModeByID(ctx context.Context, arg GetModeByIDParams) (Mode,
 		&i.Isbuiltin,
 		&i.CreateAt,
 		&i.UpdateAt,
+		&i.ModerationStatus,
+		&i.ModerationReason,
 	)
 	return i, err
 }
 
 const listModesByUserID = `-- name: ListModesByUserID :many
-SELECT id, userId, name, prompt, isBuiltIn, create_at, update_at
+SELECT id, userId, name, prompt, isBuiltIn, create_at, update_at, moderation_status, moderation_reason
 FROM modes
-WHERE userId = $1 OR isBuiltIn = TRUE
+WHERE (userId = $1 OR isBuiltIn = TRUE)
+  AND moderation_status <> 'blocked'
 ORDER BY isBuiltIn DESC, lower(name) ASC
 LIMIT $2 OFFSET $3
 `
@@ -162,6 +173,8 @@ func (q *Queries) ListModesByUserID(ctx context.Context, arg ListModesByUserIDPa
 			&i.Isbuiltin,
 			&i.CreateAt,
 			&i.UpdateAt,
+			&i.ModerationStatus,
+			&i.ModerationReason,
 		); err != nil {
 			return nil, err
 		}
@@ -182,6 +195,7 @@ SELECT $1, $2, $3
 FROM modes
 WHERE id = $2
   AND (userId = $1 OR isBuiltIn = TRUE)
+  AND moderation_status <> 'blocked'
 ON CONFLICT (userId) DO UPDATE
 SET modeId = EXCLUDED.modeId, update_at = EXCLUDED.update_at
 RETURNING modeId
@@ -204,7 +218,8 @@ const updateMode = `-- name: UpdateMode :one
 UPDATE modes
 SET name = $3, prompt = $4, update_at = $5
 WHERE id = $1 AND userId = $2 AND isBuiltIn = FALSE
-RETURNING id, userId, name, prompt, isBuiltIn, create_at, update_at
+  AND moderation_status <> 'blocked'
+RETURNING id, userId, name, prompt, isBuiltIn, create_at, update_at, moderation_status, moderation_reason
 `
 
 type UpdateModeParams struct {
@@ -232,6 +247,34 @@ func (q *Queries) UpdateMode(ctx context.Context, arg UpdateModeParams) (Mode, e
 		&i.Isbuiltin,
 		&i.CreateAt,
 		&i.UpdateAt,
+		&i.ModerationStatus,
+		&i.ModerationReason,
 	)
 	return i, err
+}
+
+const updateModeModeration = `-- name: UpdateModeModeration :execrows
+UPDATE modes
+SET moderation_status = $2, moderation_reason = $3, update_at = $4
+WHERE id = $1
+`
+
+type UpdateModeModerationParams struct {
+	ID               uuid.UUID
+	ModerationStatus string
+	ModerationReason sql.NullString
+	UpdateAt         time.Time
+}
+
+func (q *Queries) UpdateModeModeration(ctx context.Context, arg UpdateModeModerationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateModeModeration,
+		arg.ID,
+		arg.ModerationStatus,
+		arg.ModerationReason,
+		arg.UpdateAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

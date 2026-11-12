@@ -12,25 +12,48 @@ import (
 	"github.com/google/uuid"
 )
 
-type Chat struct {
-	ID        uuid.UUID
-	Sessionid uuid.NullUUID
+type AuditLog struct {
+	ID        int64
+	EventType string
 	Userid    uuid.NullUUID
-	Role      sql.NullString
-	Content   string
-	Embedding interface{}
+	Email     sql.NullString
+	Metadata  json.RawMessage
 	CreateAt  time.Time
-	UpdateAt  time.Time
+}
+
+type Chat struct {
+	ID               uuid.UUID
+	Sessionid        uuid.NullUUID
+	Userid           uuid.NullUUID
+	Role             sql.NullString
+	Content          string
+	Embedding        interface{}
+	CreateAt         time.Time
+	UpdateAt         time.Time
+	ModerationStatus string
+	ModerationReason sql.NullString
 }
 
 type Mode struct {
-	ID        uuid.UUID
-	Userid    uuid.NullUUID
-	Name      string
-	Prompt    string
-	Isbuiltin bool
-	CreateAt  time.Time
-	UpdateAt  time.Time
+	ID               uuid.UUID
+	Userid           uuid.NullUUID
+	Name             string
+	Prompt           string
+	Isbuiltin        bool
+	CreateAt         time.Time
+	UpdateAt         time.Time
+	ModerationStatus string
+	ModerationReason sql.NullString
+}
+
+type Outbox struct {
+	ID          int64
+	Topic       string
+	Key         string
+	Payload     json.RawMessage
+	Headers     json.RawMessage
+	CreateAt    time.Time
+	PublishedAt sql.NullTime
 }
 
 type Profile struct {
@@ -48,6 +71,14 @@ type Session struct {
 	Userid   uuid.UUID
 	CreateAt time.Time
 	UpdateAt time.Time
+}
+
+type SessionSummary struct {
+	Sessionid    uuid.UUID
+	Summary      string
+	Coveredchats int32
+	CreateAt     time.Time
+	UpdateAt     time.Time
 }
 
 type User struct {

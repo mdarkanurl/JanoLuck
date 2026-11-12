@@ -92,6 +92,24 @@ func (q *Queries) GetSessionByID(ctx context.Context, arg GetSessionByIDParams) 
 	return i, err
 }
 
+const getSessionSummary = `-- name: GetSessionSummary :one
+SELECT summary, coveredChats
+FROM session_summaries
+WHERE sessionId = $1
+`
+
+type GetSessionSummaryRow struct {
+	Summary      string
+	Coveredchats int32
+}
+
+func (q *Queries) GetSessionSummary(ctx context.Context, sessionid uuid.UUID) (GetSessionSummaryRow, error) {
+	row := q.db.QueryRowContext(ctx, getSessionSummary, sessionid)
+	var i GetSessionSummaryRow
+	err := row.Scan(&i.Summary, &i.Coveredchats)
+	return i, err
+}
+
 const listSessionsByUserID = `-- name: ListSessionsByUserID :many
 SELECT id, name, userId, create_at, update_at
 FROM sessions
@@ -159,4 +177,30 @@ func (q *Queries) UpdateSessionName(ctx context.Context, arg UpdateSessionNamePa
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const upsertSessionSummary = `-- name: UpsertSessionSummary :exec
+INSERT INTO session_summaries (sessionId, summary, coveredChats, update_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (sessionId) DO UPDATE
+SET summary = EXCLUDED.summary,
+    coveredChats = EXCLUDED.coveredChats,
+    update_at = EXCLUDED.update_at
+`
+
+type UpsertSessionSummaryParams struct {
+	Sessionid    uuid.UUID
+	Summary      string
+	Coveredchats int32
+	UpdateAt     time.Time
+}
+
+func (q *Queries) UpsertSessionSummary(ctx context.Context, arg UpsertSessionSummaryParams) error {
+	_, err := q.db.ExecContext(ctx, upsertSessionSummary,
+		arg.Sessionid,
+		arg.Summary,
+		arg.Coveredchats,
+		arg.UpdateAt,
+	)
+	return err
 }

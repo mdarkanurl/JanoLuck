@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
+	"github.com/mdarkanurl/JanoLuck/internal/outbox"
 )
 
 type Repository struct {
@@ -32,6 +33,50 @@ func (r *Repository) CreateMode(ctx context.Context, userID uuid.UUID, name, pro
 			return database.Mode{}, ErrAlreadyExists
 		}
 		return database.Mode{}, fmt.Errorf("%w: db CreateMode: %v", ErrInternal, err)
+	}
+
+	return mode, nil
+}
+
+func (r *Repository) CreateModeWithEvents(ctx context.Context, userID uuid.UUID, name, prompt string, build func(database.Mode) []outbox.Event) (database.Mode, error) {
+	var mode database.Mode
+
+	err := r.db.InTx(ctx, func(q *database.Queries) error {
+		row, err := q.CreateMode(ctx, database.CreateModeParams{
+			Userid: uuid.NullUUID{UUID: userID, Valid: true},
+			Name:   name,
+			Prompt: prompt,
+		})
+		if err != nil {
+			if isUniqueViolation(err) {
+				return ErrAlreadyExists
+			}
+			return fmt.Errorf("%w: db CreateMode: %v", ErrInternal, err)
+		}
+
+		mode = database.Mode{
+			ID:               row.ID,
+			Userid:           row.Userid,
+			Name:             row.Name,
+			Prompt:           row.Prompt,
+			Isbuiltin:        row.Isbuiltin,
+			CreateAt:         row.CreateAt,
+			UpdateAt:         row.UpdateAt,
+			ModerationStatus: row.ModerationStatus,
+			ModerationReason: row.ModerationReason,
+		}
+
+		store := outbox.NewRepository(q)
+		for _, event := range build(mode) {
+			if err := store.Enqueue(ctx, event.Topic, event.Key, event.Payload, event.Headers); err != nil {
+				return fmt.Errorf("%w: %v", ErrInternal, err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return database.Mode{}, err
 	}
 
 	return mode, nil
@@ -94,6 +139,55 @@ func (r *Repository) UpdateMode(ctx context.Context, modeID, userID uuid.UUID, n
 			return database.Mode{}, ErrAlreadyExists
 		}
 		return database.Mode{}, fmt.Errorf("%w: db UpdateMode: %v", ErrInternal, err)
+	}
+
+	return mode, nil
+}
+
+func (r *Repository) UpdateModeWithEvents(ctx context.Context, modeID, userID uuid.UUID, name, prompt string, build func(database.Mode) []outbox.Event) (database.Mode, error) {
+	var mode database.Mode
+
+	err := r.db.InTx(ctx, func(q *database.Queries) error {
+		row, err := q.UpdateMode(ctx, database.UpdateModeParams{
+			ID:       modeID,
+			Userid:   uuid.NullUUID{UUID: userID, Valid: true},
+			Name:     name,
+			Prompt:   prompt,
+			UpdateAt: time.Now().UTC(),
+		})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			if isUniqueViolation(err) {
+				return ErrAlreadyExists
+			}
+			return fmt.Errorf("%w: db UpdateMode: %v", ErrInternal, err)
+		}
+
+		mode = database.Mode{
+			ID:               row.ID,
+			Userid:           row.Userid,
+			Name:             row.Name,
+			Prompt:           row.Prompt,
+			Isbuiltin:        row.Isbuiltin,
+			CreateAt:         row.CreateAt,
+			UpdateAt:         row.UpdateAt,
+			ModerationStatus: row.ModerationStatus,
+			ModerationReason: row.ModerationReason,
+		}
+
+		store := outbox.NewRepository(q)
+		for _, event := range build(mode) {
+			if err := store.Enqueue(ctx, event.Topic, event.Key, event.Payload, event.Headers); err != nil {
+				return fmt.Errorf("%w: %v", ErrInternal, err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return database.Mode{}, err
 	}
 
 	return mode, nil

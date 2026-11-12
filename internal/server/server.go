@@ -15,6 +15,7 @@ import (
 	"github.com/mdarkanurl/JanoLuck/internal/database"
 	"github.com/mdarkanurl/JanoLuck/internal/kafka"
 	"github.com/mdarkanurl/JanoLuck/internal/modes"
+	"github.com/mdarkanurl/JanoLuck/internal/outbox"
 	"github.com/mdarkanurl/JanoLuck/internal/sessions"
 	"github.com/mdarkanurl/JanoLuck/internal/users"
 
@@ -72,16 +73,24 @@ func New() *Server {
 		producer = nil
 	}
 
-	authService := auth.AuthService(authRepo, tokenService, producer)
+	authService := auth.AuthService(authRepo, tokenService, producer, auth.WithEventStore(outbox.NewRepository(dbQueries)))
 	authHandler := auth.AuthHandler(authService)
 
 	usersRepo := users.NewRepository(dbQueries)
-	usersService := users.NewService(usersRepo)
+	userOpts := []users.ServiceOption{
+		users.WithEventStore(outbox.NewRepository(dbQueries)),
+	}
+	if producer != nil {
+		userOpts = append(userOpts, users.WithProducer(producer))
+	}
+	usersService := users.NewService(usersRepo, userOpts...)
 	usersHandler := users.NewHandler(usersService)
 
 	sessionsRepo := sessions.NewRepository(dbQueries)
 	sessionsLLM := llm.NewOpenRouterService(cfg.LLM_API_KEY, cfg.LLM_MODEL_NAME, cfg.LLM_EMBED_MODEL_NAME)
-	sessionOpts := []sessions.ServiceOption{}
+	sessionOpts := []sessions.ServiceOption{
+		sessions.WithEventStore(outbox.NewRepository(dbQueries)),
+	}
 	if producer != nil {
 		sessionOpts = append(sessionOpts, sessions.WithProducer(producer))
 	}
@@ -90,11 +99,23 @@ func New() *Server {
 
 	chatsRepo := chats.NewRepository(dbQueries)
 	chatsLLM := llm.NewOpenRouterService(cfg.LLM_API_KEY, cfg.LLM_MODEL_NAME, cfg.LLM_EMBED_MODEL_NAME)
-	chatsService := chats.NewService(chatsRepo, chatsLLM)
+	chatsOpts := []chats.ServiceOption{
+		chats.WithEventStore(outbox.NewRepository(dbQueries)),
+	}
+	if producer != nil {
+		chatsOpts = append(chatsOpts, chats.WithProducer(producer))
+	}
+	chatsService := chats.NewService(chatsRepo, chatsLLM, chatsOpts...)
 	chatsHandler := chats.NewHandler(chatsService)
 
 	modesRepo := modes.NewRepository(dbQueries)
-	modesService := modes.NewService(modesRepo)
+	modesOpts := []modes.ServiceOption{
+		modes.WithEventStore(outbox.NewRepository(dbQueries)),
+	}
+	if producer != nil {
+		modesOpts = append(modesOpts, modes.WithProducer(producer))
+	}
+	modesService := modes.NewService(modesRepo, modesOpts...)
 	modesHandler := modes.NewHandler(modesService)
 
 	router := NewRouter(authHandler, tokenService, usersHandler, sessionsHandler, chatsHandler, modesHandler)
@@ -116,7 +137,6 @@ func (s *Server) Start() error {
 	return s.httpServer.ListenAndServe()
 }
 
-// Close flushes queued Kafka messages and releases the database handle.
 func (s *Server) Close() error {
 	var err error
 	if s.producer != nil {

@@ -99,8 +99,13 @@ func (c *conn) Prepare(string) (driver.Stmt, error) {
 func (c *conn) Close() error { return nil }
 
 func (c *conn) Begin() (driver.Tx, error) {
-	return nil, errors.New("fake database: transactions are not supported")
+	return &fakeTx{}, nil
 }
+
+type fakeTx struct{}
+
+func (t *fakeTx) Commit() error   { return nil }
+func (t *fakeTx) Rollback() error { return nil }
 
 func (c *conn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	if c.db.Query == nil {

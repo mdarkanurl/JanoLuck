@@ -320,16 +320,16 @@ func TestServiceDeleteChat(t *testing.T) {
 func TestServiceCreateChatValidation(t *testing.T) {
 	svc := NewService(nil, nil)
 
-	if _, err := svc.CreateChat(context.Background(), "bad", testSessionID.String(), "hello"); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateChat(context.Background(), uuid.Nil, testSessionID, "hello"); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("bad user: got %v, want ErrInvalidInput", err)
 	}
-	if _, err := svc.CreateChat(context.Background(), testUserID.String(), "bad", "hello"); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateChat(context.Background(), testUserID, uuid.Nil, "hello"); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("bad session: got %v, want ErrInvalidInput", err)
 	}
-	if _, err := svc.CreateChat(context.Background(), testUserID.String(), testSessionID.String(), "  "); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateChat(context.Background(), testUserID, testSessionID, "  "); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("blank content: got %v, want ErrInvalidInput", err)
 	}
-	if _, err := svc.CreateChat(context.Background(), testUserID.String(), testSessionID.String(), strings.Repeat("a", 8001)); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateChat(context.Background(), testUserID, testSessionID, strings.Repeat("a", 8001)); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("long content: got %v, want ErrInvalidInput", err)
 	}
 }
@@ -338,7 +338,7 @@ func TestServiceCreateChatSessionLookupErrors(t *testing.T) {
 	t.Run("session missing", func(t *testing.T) {
 		svc := NewService(testRepository(t, &testutil.DB{Query: sessionExistsHandler(false)}), nil)
 
-		if _, err := svc.CreateChat(context.Background(), testUserID.String(), testSessionID.String(), "hello"); !errors.Is(err, ErrSessionNotFound) {
+		if _, err := svc.CreateChat(context.Background(), testUserID, testSessionID, "hello"); !errors.Is(err, ErrSessionNotFound) {
 			t.Errorf("got %v, want ErrSessionNotFound", err)
 		}
 	})
@@ -350,7 +350,7 @@ func TestServiceCreateChatSessionLookupErrors(t *testing.T) {
 			},
 		}), nil)
 
-		if _, err := svc.CreateChat(context.Background(), testUserID.String(), testSessionID.String(), "hello"); !errors.Is(err, ErrInternal) {
+		if _, err := svc.CreateChat(context.Background(), testUserID, testSessionID, "hello"); !errors.Is(err, ErrInternal) {
 			t.Errorf("got %v, want ErrInternal", err)
 		}
 	})
@@ -366,7 +366,7 @@ func TestServiceCreateChatModeLookupError(t *testing.T) {
 		},
 	}), nil)
 
-	if _, err := svc.CreateChat(context.Background(), testUserID.String(), testSessionID.String(), "hello"); !errors.Is(err, ErrInternal) {
+	if _, err := svc.CreateChat(context.Background(), testUserID, testSessionID, "hello"); !errors.Is(err, ErrInternal) {
 		t.Errorf("got %v, want ErrInternal", err)
 	}
 }

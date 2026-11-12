@@ -106,3 +106,52 @@ func (r *Repository) UpdateSessionName(ctx context.Context, sessionID, userID uu
 
 	return nil
 }
+
+func (r *Repository) CountChats(ctx context.Context, sessionID, userID uuid.UUID) (int, error) {
+	total, err := r.db.CountChatsBySessionID(ctx, database.CountChatsBySessionIDParams{
+		Sessionid: uuid.NullUUID{UUID: sessionID, Valid: true},
+		Userid:    uuid.NullUUID{UUID: userID, Valid: true},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("%w: db CountChatsBySessionID: %v", ErrInternal, err)
+	}
+
+	return int(total), nil
+}
+
+func (r *Repository) ListRecentChatContents(ctx context.Context, sessionID uuid.UUID, limit int) ([]string, error) {
+	contents, err := r.db.ListRecentChatContentsBySessionID(ctx, database.ListRecentChatContentsBySessionIDParams{
+		Sessionid: uuid.NullUUID{UUID: sessionID, Valid: true},
+		Limit:     int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: db ListRecentChatContentsBySessionID: %v", ErrInternal, err)
+	}
+
+	return contents, nil
+}
+
+func (r *Repository) GetSummary(ctx context.Context, sessionID uuid.UUID) (string, int, error) {
+	row, err := r.db.GetSessionSummary(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", 0, ErrSummaryNotFound
+		}
+		return "", 0, fmt.Errorf("%w: db GetSessionSummary: %v", ErrInternal, err)
+	}
+
+	return row.Summary, int(row.Coveredchats), nil
+}
+
+func (r *Repository) UpsertSummary(ctx context.Context, sessionID uuid.UUID, summary string, covered int) error {
+	if err := r.db.UpsertSessionSummary(ctx, database.UpsertSessionSummaryParams{
+		Sessionid:    sessionID,
+		Summary:      summary,
+		Coveredchats: int32(covered),
+		UpdateAt:     time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("%w: db UpsertSessionSummary: %v", ErrInternal, err)
+	}
+
+	return nil
+}

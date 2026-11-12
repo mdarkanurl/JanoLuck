@@ -3,6 +3,7 @@ package email
 const (
 	VerificationTopic  = "email.verification"
 	PasswordResetTopic = "email.password_reset"
+	NotificationTopic  = "email.notification"
 )
 
 type Job struct {

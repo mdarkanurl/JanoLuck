@@ -18,7 +18,15 @@ const (
 	defaultClientID        = "janoluck"
 	defaultDeliveryTimeout = 30 * time.Second
 	defaultFlushTimeout    = 10 * time.Second
+	schemaVersion          = "1"
 )
+
+func jsonHeaders() map[string]string {
+	return map[string]string{
+		"content_type":   "application/json",
+		"schema_version": schemaVersion,
+	}
+}
 
 var ErrClosed = errors.New("kafka: producer is closed")
 
@@ -124,26 +132,58 @@ func (p *Producer) Produce(ctx context.Context, topic, key string, value any) er
 		return fmt.Errorf("kafka: marshal message for %q: %w", topic, err)
 	}
 
-	return p.ProduceRaw(ctx, topic, []byte(key), payload, nil)
+	return p.produce(ctx, topic, []byte(key), payload, jsonHeaders(), true)
+}
+
+func (p *Producer) ProduceAsync(ctx context.Context, topic, key string, value any) error {
+	if strings.TrimSpace(topic) == "" {
+		return errors.New("kafka: topic is required")
+	}
+
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("kafka: marshal message for %q: %w", topic, err)
+	}
+
+	return p.produce(ctx, topic, []byte(key), payload, jsonHeaders(), false)
 }
 
 func (p *Producer) ProduceRaw(ctx context.Context, topic string, key, value []byte, headers map[string]string) error {
+	return p.produce(ctx, topic, key, value, headers, true)
+}
+
+func (p *Producer) ProduceRawAsync(ctx context.Context, topic string, key, value []byte, headers map[string]string) error {
+	merged := jsonHeaders()
+	for name, headerValue := range headers {
+		merged[name] = headerValue
+	}
+
+	return p.produce(ctx, topic, key, value, merged, false)
+}
+
+func (p *Producer) produce(ctx context.Context, topic string, key, value []byte, headers map[string]string, wait bool) error {
 	if strings.TrimSpace(topic) == "" {
 		return errors.New("kafka: topic is required")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("kafka: produce to %q: %w", topic, err)
+	}
 
-	delivery := make(chan error, 1)
+	var delivery chan error
 	msg := &kafka.Message{
 		TopicPartition: kafka.TopicPartition{
 			Topic:     &topic,
 			Partition: kafka.PartitionAny,
 		},
-		Key:    key,
-		Value:  value,
-		Opaque: delivery,
+		Key:   key,
+		Value: value,
+	}
+	if wait {
+		delivery = make(chan error, 1)
+		msg.Opaque = delivery
 	}
 	if len(headers) > 0 {
 		keys := make([]string, 0, len(headers))
@@ -167,6 +207,9 @@ func (p *Producer) ProduceRaw(ctx context.Context, topic string, key, value []by
 	p.mu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("kafka: produce to %q: %w", topic, err)
+	}
+	if !wait {
+		return nil
 	}
 
 	select {
@@ -204,11 +247,22 @@ func (p *Producer) handleDeliveryEvents() {
 	for event := range p.client.Events() {
 		switch e := event.(type) {
 		case *kafka.Message:
-			ch, ok := e.Opaque.(chan error)
-			if !ok {
+			if ch, ok := e.Opaque.(chan error); ok {
+				ch <- e.TopicPartition.Error
 				continue
 			}
-			ch <- e.TopicPartition.Error
+			if e.TopicPartition.Error != nil && p.logger != nil {
+				topic := ""
+				if e.TopicPartition.Topic != nil {
+					topic = *e.TopicPartition.Topic
+				}
+				p.logger.Error(
+					"kafka async delivery failed",
+					"topic", topic,
+					"partition", e.TopicPartition.Partition,
+					"error", e.TopicPartition.Error,
+				)
+			}
 		case kafka.Error:
 			if p.logger == nil {
 				continue

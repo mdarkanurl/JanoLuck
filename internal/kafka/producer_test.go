@@ -65,6 +65,26 @@ func TestProduceRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestProduceRawAsyncRejectsInvalidInput(t *testing.T) {
+	producer, err := NewProducer([]string{"127.0.0.1:9092"})
+	if err != nil {
+		t.Fatalf("NewProducer: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := producer.Close(); err != nil {
+			t.Logf("Close: %v", err)
+		}
+	})
+
+	if err := producer.ProduceRawAsync(context.Background(), " ", []byte("key"), []byte(`{}`), nil); err == nil {
+		t.Fatal("ProduceRawAsync with empty topic returned no error")
+	}
+
+	if err := producer.ProduceRawAsync(context.Background(), "events", []byte("key"), []byte(`{}`), nil); err != nil {
+		t.Fatalf("ProduceRawAsync: %v", err)
+	}
+}
+
 func TestProduceAfterClose(t *testing.T) {
 	producer, err := NewProducer(
 		[]string{"127.0.0.1:9092"},

@@ -34,7 +34,7 @@ func (q *Queries) CountChatsBySessionID(ctx context.Context, arg CountChatsBySes
 const createChat = `-- name: CreateChat :one
 INSERT INTO chats (sessionId, userId, role, content, embedding)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, sessionId, userId, role, content, create_at, update_at
+RETURNING id, sessionId, userId, role, content, create_at, update_at, moderation_status, moderation_reason
 `
 
 type CreateChatParams struct {
@@ -46,13 +46,15 @@ type CreateChatParams struct {
 }
 
 type CreateChatRow struct {
-	ID        uuid.UUID
-	Sessionid uuid.NullUUID
-	Userid    uuid.NullUUID
-	Role      sql.NullString
-	Content   string
-	CreateAt  time.Time
-	UpdateAt  time.Time
+	ID               uuid.UUID
+	Sessionid        uuid.NullUUID
+	Userid           uuid.NullUUID
+	Role             sql.NullString
+	Content          string
+	CreateAt         time.Time
+	UpdateAt         time.Time
+	ModerationStatus string
+	ModerationReason sql.NullString
 }
 
 func (q *Queries) CreateChat(ctx context.Context, arg CreateChatParams) (CreateChatRow, error) {
@@ -72,6 +74,8 @@ func (q *Queries) CreateChat(ctx context.Context, arg CreateChatParams) (CreateC
 		&i.Content,
 		&i.CreateAt,
 		&i.UpdateAt,
+		&i.ModerationStatus,
+		&i.ModerationReason,
 	)
 	return i, err
 }
@@ -95,7 +99,7 @@ func (q *Queries) DeleteChat(ctx context.Context, arg DeleteChatParams) (int64, 
 }
 
 const getChatByID = `-- name: GetChatByID :one
-SELECT id, sessionId, userId, role, content, create_at, update_at
+SELECT id, sessionId, userId, role, content, create_at, update_at, moderation_status, moderation_reason
 FROM chats
 WHERE id = $1 AND userId = $2
 `
@@ -106,13 +110,15 @@ type GetChatByIDParams struct {
 }
 
 type GetChatByIDRow struct {
-	ID        uuid.UUID
-	Sessionid uuid.NullUUID
-	Userid    uuid.NullUUID
-	Role      sql.NullString
-	Content   string
-	CreateAt  time.Time
-	UpdateAt  time.Time
+	ID               uuid.UUID
+	Sessionid        uuid.NullUUID
+	Userid           uuid.NullUUID
+	Role             sql.NullString
+	Content          string
+	CreateAt         time.Time
+	UpdateAt         time.Time
+	ModerationStatus string
+	ModerationReason sql.NullString
 }
 
 func (q *Queries) GetChatByID(ctx context.Context, arg GetChatByIDParams) (GetChatByIDRow, error) {
@@ -126,6 +132,8 @@ func (q *Queries) GetChatByID(ctx context.Context, arg GetChatByIDParams) (GetCh
 		&i.Content,
 		&i.CreateAt,
 		&i.UpdateAt,
+		&i.ModerationStatus,
+		&i.ModerationReason,
 	)
 	return i, err
 }
@@ -146,7 +154,7 @@ func (q *Queries) IsItFirstChat(ctx context.Context, sessionid uuid.NullUUID) (b
 }
 
 const listChatsBySessionID = `-- name: ListChatsBySessionID :many
-SELECT id, sessionId, userId, role, content, create_at, update_at
+SELECT id, sessionId, userId, role, content, create_at, update_at, moderation_status, moderation_reason
 FROM chats
 WHERE sessionId = $1 AND userId = $2
 ORDER BY create_at DESC, id DESC
@@ -161,13 +169,15 @@ type ListChatsBySessionIDParams struct {
 }
 
 type ListChatsBySessionIDRow struct {
-	ID        uuid.UUID
-	Sessionid uuid.NullUUID
-	Userid    uuid.NullUUID
-	Role      sql.NullString
-	Content   string
-	CreateAt  time.Time
-	UpdateAt  time.Time
+	ID               uuid.UUID
+	Sessionid        uuid.NullUUID
+	Userid           uuid.NullUUID
+	Role             sql.NullString
+	Content          string
+	CreateAt         time.Time
+	UpdateAt         time.Time
+	ModerationStatus string
+	ModerationReason sql.NullString
 }
 
 func (q *Queries) ListChatsBySessionID(ctx context.Context, arg ListChatsBySessionIDParams) ([]ListChatsBySessionIDRow, error) {
@@ -192,10 +202,90 @@ func (q *Queries) ListChatsBySessionID(ctx context.Context, arg ListChatsBySessi
 			&i.Content,
 			&i.CreateAt,
 			&i.UpdateAt,
+			&i.ModerationStatus,
+			&i.ModerationReason,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatsForEmbedding = `-- name: ListChatsForEmbedding :many
+SELECT id, sessionId, userId, content
+FROM chats
+WHERE ($1::boolean OR embedding IS NULL)
+ORDER BY create_at ASC
+`
+
+type ListChatsForEmbeddingRow struct {
+	ID        uuid.UUID
+	Sessionid uuid.NullUUID
+	Userid    uuid.NullUUID
+	Content   string
+}
+
+func (q *Queries) ListChatsForEmbedding(ctx context.Context, includeall bool) ([]ListChatsForEmbeddingRow, error) {
+	rows, err := q.db.QueryContext(ctx, listChatsForEmbedding, includeall)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChatsForEmbeddingRow
+	for rows.Next() {
+		var i ListChatsForEmbeddingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Sessionid,
+			&i.Userid,
+			&i.Content,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentChatContentsBySessionID = `-- name: ListRecentChatContentsBySessionID :many
+SELECT content
+FROM chats
+WHERE sessionId = $1
+ORDER BY create_at DESC, id DESC
+LIMIT $2
+`
+
+type ListRecentChatContentsBySessionIDParams struct {
+	Sessionid uuid.NullUUID
+	Limit     int32
+}
+
+func (q *Queries) ListRecentChatContentsBySessionID(ctx context.Context, arg ListRecentChatContentsBySessionIDParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listRecentChatContentsBySessionID, arg.Sessionid, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			return nil, err
+		}
+		items = append(items, content)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -275,7 +365,7 @@ const updateChatContent = `-- name: UpdateChatContent :one
 UPDATE chats
 SET content = $3, update_at = $4
 WHERE id = $1 AND userId = $2
-RETURNING id, sessionId, userId, role, content, create_at, update_at
+RETURNING id, sessionId, userId, role, content, create_at, update_at, moderation_status, moderation_reason
 `
 
 type UpdateChatContentParams struct {
@@ -286,13 +376,15 @@ type UpdateChatContentParams struct {
 }
 
 type UpdateChatContentRow struct {
-	ID        uuid.UUID
-	Sessionid uuid.NullUUID
-	Userid    uuid.NullUUID
-	Role      sql.NullString
-	Content   string
-	CreateAt  time.Time
-	UpdateAt  time.Time
+	ID               uuid.UUID
+	Sessionid        uuid.NullUUID
+	Userid           uuid.NullUUID
+	Role             sql.NullString
+	Content          string
+	CreateAt         time.Time
+	UpdateAt         time.Time
+	ModerationStatus string
+	ModerationReason sql.NullString
 }
 
 func (q *Queries) UpdateChatContent(ctx context.Context, arg UpdateChatContentParams) (UpdateChatContentRow, error) {
@@ -311,6 +403,54 @@ func (q *Queries) UpdateChatContent(ctx context.Context, arg UpdateChatContentPa
 		&i.Content,
 		&i.CreateAt,
 		&i.UpdateAt,
+		&i.ModerationStatus,
+		&i.ModerationReason,
 	)
 	return i, err
+}
+
+const updateChatEmbedding = `-- name: UpdateChatEmbedding :execrows
+UPDATE chats
+SET embedding = $2, update_at = $3
+WHERE id = $1
+`
+
+type UpdateChatEmbeddingParams struct {
+	ID        uuid.UUID
+	Embedding interface{}
+	UpdateAt  time.Time
+}
+
+func (q *Queries) UpdateChatEmbedding(ctx context.Context, arg UpdateChatEmbeddingParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateChatEmbedding, arg.ID, arg.Embedding, arg.UpdateAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateChatModeration = `-- name: UpdateChatModeration :execrows
+UPDATE chats
+SET moderation_status = $2, moderation_reason = $3, update_at = $4
+WHERE id = $1
+`
+
+type UpdateChatModerationParams struct {
+	ID               uuid.UUID
+	ModerationStatus string
+	ModerationReason sql.NullString
+	UpdateAt         time.Time
+}
+
+func (q *Queries) UpdateChatModeration(ctx context.Context, arg UpdateChatModerationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateChatModeration,
+		arg.ID,
+		arg.ModerationStatus,
+		arg.ModerationReason,
+		arg.UpdateAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

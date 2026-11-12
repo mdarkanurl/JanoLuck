@@ -79,6 +79,21 @@ type ValidationError struct {
 	Message string `json:"message"`
 }
 
+// Stream event types sent to the client while a prediction is generated.
+const (
+	StreamEventDelta = "delta"
+	StreamEventDone  = "done"
+	StreamEventError = "error"
+)
+
+// ChatStreamPayload is a single server-sent event of a streamed prediction.
+type ChatStreamPayload struct {
+	Type    string    `json:"type"`
+	Content string    `json:"content,omitempty"`
+	Error   string    `json:"error,omitempty"`
+	Chat    *ChatData `json:"chat,omitempty"`
+}
+
 type ErrorResponse struct {
 	Error  string            `json:"error"`
 	Fields []ValidationError `json:"fields,omitempty"`

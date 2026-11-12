@@ -34,10 +34,12 @@ func chatRowValues() []driver.Value {
 		"hello",
 		testTime,
 		testTime,
+		"allowed",
+		nil,
 	}
 }
 
-var chatColumns = []string{"id", "sessionId", "userId", "role", "content", "create_at", "update_at"}
+var chatColumns = []string{"id", "sessionId", "userId", "role", "content", "create_at", "update_at", "moderation_status", "moderation_reason"}
 
 func TestNewChat(t *testing.T) {
 	chat := newChat(
@@ -100,7 +102,7 @@ func TestRepositorySessionExistsByUserID(t *testing.T) {
 }
 
 func TestRepositoryGetActiveModeByUserID(t *testing.T) {
-	modeColumns := []string{"id", "userId", "name", "prompt", "isBuiltIn", "create_at", "update_at"}
+	modeColumns := []string{"id", "userId", "name", "prompt", "isBuiltIn", "create_at", "update_at", "moderation_status", "moderation_reason"}
 	modeValues := []driver.Value{
 		testChatID.String(),
 		testUserID.String(),
@@ -109,6 +111,8 @@ func TestRepositoryGetActiveModeByUserID(t *testing.T) {
 		false,
 		testTime,
 		testTime,
+		"allowed",
+		nil,
 	}
 
 	t.Run("success", func(t *testing.T) {

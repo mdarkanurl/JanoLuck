@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/mdarkanurl/JanoLuck/internal/analytics"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
+	"github.com/mdarkanurl/JanoLuck/internal/outbox"
 )
 
 var (
@@ -18,12 +22,54 @@ var (
 	ErrAlreadyExists = errors.New("profile already exists")
 )
 
-type Service struct {
-	repo *Repository
+type Publisher interface {
+	ProduceAsync(ctx context.Context, topic, key string, value any) error
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+type Service struct {
+	repo     *Repository
+	producer Publisher
+	store    *outbox.Repository
+	logger   *slog.Logger
+}
+
+type ServiceOption func(*Service)
+
+func WithProducer(producer Publisher) ServiceOption {
+	return func(s *Service) {
+		if producer != nil {
+			s.producer = producer
+		}
+	}
+}
+
+func WithEventStore(store *outbox.Repository) ServiceOption {
+	return func(s *Service) {
+		if store != nil {
+			s.store = store
+		}
+	}
+}
+
+func WithLogger(logger *slog.Logger) ServiceOption {
+	return func(s *Service) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
+}
+
+const publishTimeout = 5 * time.Second
+
+func NewService(repo *Repository, opts ...ServiceOption) *Service {
+	s := &Service{
+		repo:   repo,
+		logger: slog.Default(),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *Service) CreateProfile(ctx context.Context, userIDStr, name, qOne, qTwo string) (database.CreateProfileRow, error) {
@@ -44,6 +90,11 @@ func (s *Service) CreateProfile(ctx context.Context, userIDStr, name, qOne, qTwo
 	if err != nil {
 		return database.CreateProfileRow{}, err
 	}
+
+	s.recordAnalytics(ctx, analytics.Event{
+		Type:   "profile.created",
+		UserID: userID.String(),
+	})
 
 	return profile, nil
 }
@@ -121,5 +172,37 @@ func (s *Service) UpdateProfile(ctx context.Context, userIDStr string, req Updat
 		}
 	}
 
-	return s.repo.UpdateProfile(ctx, userID, name, questions)
+	updated, err := s.repo.UpdateProfile(ctx, userID, name, questions)
+	if err != nil {
+		return database.UpdateProfileRow{}, err
+	}
+
+	s.recordAnalytics(ctx, analytics.Event{
+		Type:   "profile.updated",
+		UserID: userID.String(),
+	})
+
+	return updated, nil
+}
+
+func (s *Service) recordAnalytics(ctx context.Context, event analytics.Event) {
+	if s.store != nil {
+		key := event.UserID
+		if key == "" {
+			key = event.Type
+		}
+		if err := s.store.Enqueue(ctx, analytics.Topic, key, event, nil); err != nil {
+			s.logger.Warn("could not enqueue analytics event", "type", event.Type, "error", err)
+		}
+		return
+	}
+
+	if s.producer == nil {
+		return
+	}
+
+	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
+	defer cancel()
+
+	analytics.Record(publishCtx, s.producer, event)
 }
