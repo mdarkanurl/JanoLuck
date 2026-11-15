@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,7 @@ import (
 	"github.com/mdarkanurl/JanoLuck/internal/kafka"
 	"github.com/mdarkanurl/JanoLuck/internal/modes"
 	"github.com/mdarkanurl/JanoLuck/internal/outbox"
+	"github.com/mdarkanurl/JanoLuck/internal/ratelimit"
 	"github.com/mdarkanurl/JanoLuck/internal/sessions"
 	"github.com/mdarkanurl/JanoLuck/internal/users"
 
@@ -49,6 +51,7 @@ func New() *Server {
 	dbQueries := database.New(db)
 	redisQueries := database.NewRedisClient(cfg.REDIS_ADDR, cfg.REDIS_PASSWORD, redisDB)
 	authRepo := auth.NewRepository(dbQueries, redisQueries)
+	rateLimiter := ratelimit.NewRedisLimiter(redisQueries, "janoluck")
 
 	accessMinutes, err := strconv.Atoi(cfg.ACCESS_TOKEN_TTL_MINUTES)
 	if err != nil || accessMinutes <= 0 {
@@ -118,7 +121,20 @@ func New() *Server {
 	modesService := modes.NewService(modesRepo, modesOpts...)
 	modesHandler := modes.NewHandler(modesService)
 
-	router := NewRouter(authHandler, tokenService, usersHandler, sessionsHandler, chatsHandler, modesHandler)
+	router := NewRouter(
+		authHandler,
+		tokenService,
+		usersHandler,
+		sessionsHandler,
+		chatsHandler,
+		modesHandler,
+		WithRateLimiter(rateLimiter),
+		WithTrustProxy(strings.EqualFold(strings.TrimSpace(cfg.TRUST_PROXY), "true")),
+		WithRateLimits(
+			rateLimitFromConfig(cfg.RATE_LIMIT_REQUESTS, cfg.RATE_LIMIT_WINDOW_SECONDS, defaultRateLimitRequests, defaultRateLimitWindow),
+			rateLimitFromConfig(cfg.AUTH_RATE_LIMIT_REQUESTS, cfg.AUTH_RATE_LIMIT_WINDOW_SECONDS, defaultAuthRateLimitRequests, defaultAuthRateLimitWindow),
+		),
+	)
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.PORT,
@@ -146,4 +162,18 @@ func (s *Server) Close() error {
 		err = dbErr
 	}
 	return err
+}
+
+func rateLimitFromConfig(requestsRaw, windowRaw string, fallbackRequests int, fallbackWindow time.Duration) ratelimit.Limit {
+	requests := fallbackRequests
+	if v, err := strconv.Atoi(strings.TrimSpace(requestsRaw)); err == nil && v > 0 {
+		requests = v
+	}
+
+	window := fallbackWindow
+	if v, err := strconv.Atoi(strings.TrimSpace(windowRaw)); err == nil && v > 0 {
+		window = time.Duration(v) * time.Second
+	}
+
+	return ratelimit.Limit{Requests: requests, Window: window}
 }

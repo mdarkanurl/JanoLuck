@@ -29,6 +29,7 @@ var (
 	ErrInternal            = errors.New("something went wrong")
 	ErrInvalidCredentials  = errors.New("invalid credentials")
 	ErrTokenExpired        = errors.New("token expired")
+	ErrTooManyAttempts     = errors.New("too many attempts, request a new code")
 )
 
 type Service struct {
@@ -145,6 +146,7 @@ func (s *Service) SignUp(ctx context.Context, email, password string) error {
 	if err := s.repo.CreateUserInRedis(ctx, email, string(hashed), codeHash); err != nil {
 		return err
 	}
+	_ = s.repo.ClearCodeAttempts(ctx, verifyCodeScope, email)
 
 	job := emailpkg.Job{
 		To:      email,
@@ -169,9 +171,21 @@ func (s *Service) VerifyEmail(ctx context.Context, email string, code int) (*Aut
 		return nil, err
 	}
 
+	attempts, err := s.repo.IncrementCodeAttempts(ctx, verifyCodeScope, email, verificationCodeTTL)
+	if err != nil {
+		return nil, err
+	}
+	if attempts > maxCodeAttempts {
+		_ = s.repo.DeletePendingUser(ctx, email)
+		_ = s.repo.ClearCodeAttempts(ctx, verifyCodeScope, email)
+		return nil, ErrTooManyAttempts
+	}
+
 	if subtle.ConstantTimeCompare([]byte(hashCode(code)), []byte(pending.VerificationCodeHash)) != 1 {
 		return nil, ErrInvalidCredentials
 	}
+
+	_ = s.repo.ClearCodeAttempts(ctx, verifyCodeScope, email)
 
 	userInDB, err := s.repo.IsUserExistInDB(email, ctx)
 	if err != nil {
@@ -311,6 +325,14 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 		return fmt.Errorf("%w: kafka producer is not configured", ErrInternal)
 	}
 
+	allowed, err := s.repo.AllowPasswordReset(ctx, email, passwordResetCooldown)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return nil
+	}
+
 	n, err := rand.Int(rand.Reader, big.NewInt(900000))
 	if err != nil {
 		return fmt.Errorf("%w: generate reset code: %v", ErrInternal, err)
@@ -320,6 +342,7 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 	if err := s.repo.CreatePasswordReset(ctx, email, hashCode(rawCode)); err != nil {
 		return err
 	}
+	_ = s.repo.ClearCodeAttempts(ctx, resetCodeScope, email)
 
 	job := emailpkg.Job{
 		To:      email,
@@ -344,9 +367,21 @@ func (s *Service) ResetPassword(ctx context.Context, email string, code int, new
 		return err
 	}
 
+	attempts, err := s.repo.IncrementCodeAttempts(ctx, resetCodeScope, email, passwordResetCodeTTL)
+	if err != nil {
+		return err
+	}
+	if attempts > maxCodeAttempts {
+		_ = s.repo.DeletePasswordReset(ctx, email)
+		_ = s.repo.ClearCodeAttempts(ctx, resetCodeScope, email)
+		return ErrTooManyAttempts
+	}
+
 	if subtle.ConstantTimeCompare([]byte(hashCode(code)), []byte(wantHash)) != 1 {
 		return ErrInvalidCredentials
 	}
+
+	_ = s.repo.ClearCodeAttempts(ctx, resetCodeScope, email)
 
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {

@@ -268,7 +268,8 @@ go build -o bin/janoluck ./cmd/cli
 
 Running `janoluck` opens a full-screen chat app. If you are not signed in, it
 starts on the login screen; `ctrl+n` switches to sign-up and a 6-digit code
-from your email verifies the account.
+from your email verifies the account. `ctrl+r` starts the forgot-password flow:
+enter your email, then the reset code and a new password.
 
 On launch you get a clean, centered composer. Your first message starts a new
 conversation automatically; there is no sidebar.
@@ -282,12 +283,13 @@ highlighted one. `/session` works as an alias for `/sessions`.
 | `/modes` | Choose the active prediction mode, or manage custom modes |
 | `/new` | Start a new conversation |
 | `/profile` | Edit your profile |
+| `/password` | Change your password |
 | `/logout` | Log out |
 | `/help` | Show commands and shortcuts |
 | `/quit` | Quit |
 
 In the conversation view, your messages align to the right and Jano's to the
-left, with a scrollbar down the side:
+left, and long threads scroll instead of overflowing the screen:
 
 | Key | Action |
 | --- | --- |
@@ -299,6 +301,10 @@ left, with a scrollbar down the side:
 | `ctrl+u` / `ctrl+d` | Scroll half a page |
 | `ctrl+h` | Show commands and shortcuts |
 | `ctrl+c` | Quit |
+
+`/help` opens a panel that fits the terminal and scrolls like the conversation:
+`↑` / `↓`, `pgup` / `pgdown`, `ctrl+u` / `ctrl+d` and the mouse wheel move
+through it, and `esc` (or `ctrl+h`) closes it.
 
 Inside the `/session` picker:
 
@@ -316,6 +322,7 @@ Inside the `/modes` picker:
 | --- | --- |
 | `↑` / `↓` | Move through modes |
 | `enter` | Make the selected mode active |
+| `c` | Clear the active mode |
 | `n` | Create a custom mode |
 | `e` | Edit the selected custom mode |
 | `d` | Delete the selected custom mode |
@@ -325,6 +332,9 @@ Inside the `/modes` picker:
 Built-in modes can be selected but not edited or deleted. Custom modes open a
 small form: `tab` moves between the name and instructions, `ctrl+j` inserts a
 newline in the instructions, `enter` saves and `esc` cancels.
+
+The conversation picker and chat history load every page from the API, so old
+conversations and long threads stay reachable.
 
 JWTs and the last opened session are stored in the OS config directory
 (`~/.config/janoluck/auth.json` on Linux) with `0600` permissions. Override the

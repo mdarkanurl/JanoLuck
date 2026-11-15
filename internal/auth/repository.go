@@ -18,6 +18,18 @@ type Repository struct {
 	redis *redis.Client
 }
 
+const (
+	verificationCodeTTL   = 5 * time.Minute
+	passwordResetCodeTTL  = 10 * time.Minute
+	passwordResetCooldown = time.Minute
+	maxCodeAttempts       = 5
+)
+
+const (
+	verifyCodeScope = "verify"
+	resetCodeScope  = "reset"
+)
+
 func NewRepository(dbQueries *database.Queries, redisQueries *redis.Client) *Repository {
 	return &Repository{
 		db:    dbQueries,
@@ -36,7 +48,7 @@ func (r *Repository) CreateUserInRedis(ctx context.Context, email, hashedPasswor
 		return fmt.Errorf("%w: marshal pending user: %v", ErrInternal, err)
 	}
 
-	set, err := r.redis.SetNX(ctx, "verificationCode:"+email, data, 5*time.Minute).Result()
+	set, err := r.redis.SetNX(ctx, "verificationCode:"+email, data, verificationCodeTTL).Result()
 	if err != nil {
 		return fmt.Errorf("%w: redis SetNX: %v", ErrInternal, err)
 	}
@@ -217,8 +229,42 @@ func (r *Repository) UpdateUserPassword(ctx context.Context, userID, hashedPassw
 }
 
 func (r *Repository) CreatePasswordReset(ctx context.Context, email, codeHash string) error {
-	if err := r.redis.Set(ctx, "reset:"+email, codeHash, 10*time.Minute).Err(); err != nil {
+	if err := r.redis.Set(ctx, "reset:"+email, codeHash, passwordResetCodeTTL).Err(); err != nil {
 		return fmt.Errorf("%w: redis Set reset code: %v", ErrInternal, err)
+	}
+	return nil
+}
+
+// AllowPasswordReset applies a per-email cooldown so a single address cannot be
+// flooded with reset emails.
+func (r *Repository) AllowPasswordReset(ctx context.Context, email string, cooldown time.Duration) (bool, error) {
+	allowed, err := r.redis.SetNX(ctx, "reset:cooldown:"+email, 1, cooldown).Result()
+	if err != nil {
+		return false, fmt.Errorf("%w: redis SetNX reset cooldown: %v", ErrInternal, err)
+	}
+	return allowed, nil
+}
+
+// IncrementCodeAttempts counts failed verification/reset attempts for an email.
+// The counter is extended on every attempt so it cannot be left without a TTL.
+func (r *Repository) IncrementCodeAttempts(ctx context.Context, scope, email string, ttl time.Duration) (int64, error) {
+	key := "attempts:" + scope + ":" + email
+
+	attempts, err := r.redis.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, fmt.Errorf("%w: redis Incr code attempts: %v", ErrInternal, err)
+	}
+	if err := r.redis.Expire(ctx, key, ttl).Err(); err != nil {
+		return 0, fmt.Errorf("%w: redis Expire code attempts: %v", ErrInternal, err)
+	}
+
+	return attempts, nil
+}
+
+// ClearCodeAttempts removes the attempt counter after a successful verification.
+func (r *Repository) ClearCodeAttempts(ctx context.Context, scope, email string) error {
+	if err := r.redis.Del(ctx, "attempts:"+scope+":"+email).Err(); err != nil {
+		return fmt.Errorf("%w: redis Del code attempts: %v", ErrInternal, err)
 	}
 	return nil
 }

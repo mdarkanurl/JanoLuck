@@ -212,6 +212,9 @@ func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, err.Error())
 		case errors.Is(err, ErrTokenExpired):
 			writeError(w, http.StatusGone, err.Error())
+		case errors.Is(err, ErrTooManyAttempts):
+			w.Header().Set("Retry-After", "300")
+			writeError(w, http.StatusTooManyRequests, err.Error())
 		case errors.Is(err, ErrUserExists):
 			writeError(w, http.StatusConflict, err.Error())
 		default:
@@ -322,6 +325,9 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, err.Error())
 		case errors.Is(err, ErrTokenExpired):
 			writeError(w, http.StatusGone, err.Error())
+		case errors.Is(err, ErrTooManyAttempts):
+			w.Header().Set("Retry-After", "600")
+			writeError(w, http.StatusTooManyRequests, err.Error())
 		default:
 			writeError(w, http.StatusInternalServerError, ErrInternal.Error())
 		}
