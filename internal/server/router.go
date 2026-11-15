@@ -94,6 +94,10 @@ func NewRouter(
 
 	r := chi.NewRouter()
 
+	r.Use(RequestID)
+	r.Use(AccessLog(cfg.logger, clientKey))
+	r.Use(Recoverer(cfg.logger))
+
 	r.Use(ratelimit.Middleware(ratelimit.MiddlewareConfig{
 		Limiter: cfg.limiter,
 		Limit:   cfg.rateLimit,

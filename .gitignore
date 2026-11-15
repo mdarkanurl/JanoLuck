@@ -1,5 +1,5 @@
 # binaries
-server
+/server
 /cli
 /worker
 *.exe

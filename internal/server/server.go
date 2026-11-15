@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
 	"net/http"
@@ -30,6 +31,13 @@ type Server struct {
 	db         *sql.DB
 	producer   *kafka.Producer
 }
+
+const (
+	serverReadHeaderTimeout = 10 * time.Second
+	serverReadTimeout       = 30 * time.Second
+	serverIdleTimeout       = 120 * time.Second
+	serverMaxHeaderBytes    = 1 << 20 // 1 MiB
+)
 
 func New() *Server {
 	cfg := config.Load()
@@ -137,8 +145,12 @@ func New() *Server {
 	)
 
 	httpServer := &http.Server{
-		Addr:    ":" + cfg.PORT,
-		Handler: router,
+		Addr:              ":" + cfg.PORT,
+		Handler:           router,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		ReadTimeout:       serverReadTimeout,
+		IdleTimeout:       serverIdleTimeout,
+		MaxHeaderBytes:    serverMaxHeaderBytes,
 	}
 
 	return &Server{
@@ -151,6 +163,14 @@ func New() *Server {
 
 func (s *Server) Start() error {
 	return s.httpServer.ListenAndServe()
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	if err := s.httpServer.Shutdown(ctx); err != nil {
+		_ = s.httpServer.Close()
+		return err
+	}
+	return nil
 }
 
 func (s *Server) Close() error {
