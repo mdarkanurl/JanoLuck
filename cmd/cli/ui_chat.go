@@ -39,6 +39,7 @@ var commandSuggestions = []commandSuggestion{
 	{"/modes", "choose or edit prediction modes"},
 	{"/new", "start a new conversation"},
 	{"/profile", "edit your profile"},
+	{"/password", "change your password"},
 	{"/logout", "log out"},
 	{"/help", "show commands and shortcuts"},
 	{"/quit", "quit JanoLuck"},
@@ -361,6 +362,9 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 	case modeDeletedMsg:
 		return m.handleModeDeleted(msg)
 
+	case modeClearedMsg:
+		return m.handleModeCleared(msg)
+
 	case modeSavedMsg:
 		return m.handleModeSaved(msg)
 	}
@@ -377,6 +381,7 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 
 	options := m.commandSuggestions()
 	if len(options) > 0 {
+		index := min(max(m.suggestIndex, 0), len(options)-1)
 		switch msg.String() {
 		case "up", "ctrl+p":
 			m.suggestIndex = (m.suggestIndex - 1 + len(options)) % len(options)
@@ -385,13 +390,21 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 			m.suggestIndex = (m.suggestIndex + 1) % len(options)
 			return m, nil
 		case "tab":
-			index := min(max(m.suggestIndex, 0), len(options)-1)
 			m.input.SetValue(options[index].name + " ")
 			m.input.CursorEnd()
 			m.suggestIndex = 0
 			m.syncInputHeight()
 			m.resizeViewport()
 			return m, nil
+		case "enter":
+			// Run the highlighted command instead of submitting the partial
+			// text, so selecting a suggestion and pressing enter works.
+			m.input.SetValue(options[index].name)
+			m.input.CursorEnd()
+			m.suggestIndex = 0
+			m.syncInputHeight()
+			m.resizeViewport()
+			return m.runCommand(options[index].name)
 		case "esc":
 			m.suggestDismissed = true
 			m.resizeViewport()
@@ -608,7 +621,7 @@ func matchingCommands(value string) []commandSuggestion {
 
 func knownCommand(value string) bool {
 	switch value {
-	case "/session", "/sessions", "/mode", "/modes", "/new", "/profile", "/logout", "/help", "/quit", "/exit":
+	case "/session", "/sessions", "/mode", "/modes", "/new", "/profile", "/password", "/logout", "/help", "/quit", "/exit":
 		return true
 	}
 	return false
@@ -700,6 +713,10 @@ func (m chatModel) runCommand(value string) (chatModel, tea.Cmd) {
 		m.input.Reset()
 		m.syncInputHeight()
 		return m, func() tea.Msg { return openProfileMsg{} }
+	case "/password":
+		m.input.Reset()
+		m.syncInputHeight()
+		return m, func() tea.Msg { return openPasswordMsg{} }
 	case "/logout":
 		m.input.Reset()
 		m.syncInputHeight()
@@ -999,14 +1016,21 @@ func (m chatModel) suggestionsView() string {
 	width := m.contentWidth()
 	index := min(max(m.suggestIndex, 0), len(options)-1)
 
+	// The parent view centres each line independently, so every row must be
+	// padded to the same width. Otherwise shorter rows drift towards the
+	// middle and the command list looks ragged.
+	rowStyle := lipgloss.NewStyle().Width(width).Align(lipgloss.Left)
+
 	rows := make([]string, 0, len(options))
 	for i, option := range options {
-		row := fmt.Sprintf(" %-13s%s", option.name, option.description)
+		name := fmt.Sprintf(" %-13s", option.name)
+		body := name + option.description
 		if i == index {
-			rows = append(rows, selectedStyle.Width(width).Render(row))
+			rows = append(rows, selectedStyle.Width(width).Align(lipgloss.Left).Render(body))
 		} else {
-			rows = append(rows, accentStyle.Render(fmt.Sprintf(" %-13s", option.name))+
-				mutedStyle.Render(option.description))
+			rows = append(rows, rowStyle.Render(
+				accentStyle.Render(name)+mutedStyle.Render(option.description),
+			))
 		}
 	}
 
@@ -1293,8 +1317,8 @@ func startChatStreamCmd(c *client, session sessionData, message string, ch chan<
 			_ = c.setSession(id)
 
 			var sessions []sessionData
-			if list, listErr := c.listSessions(ctx, 1, 50); listErr == nil {
-				sessions = list.Sessions
+			if list, listErr := c.listAllSessions(ctx); listErr == nil {
+				sessions = list
 			}
 
 			ch <- chatStreamMsg{
@@ -1322,11 +1346,11 @@ func waitChatStreamCmd(ch <-chan chatStreamMsg) tea.Cmd {
 
 func listSessionsCmd(c *client) tea.Cmd {
 	return func() tea.Msg {
-		list, err := c.listSessions(context.Background(), 1, 50)
+		sessions, err := c.listAllSessions(context.Background())
 		if err != nil {
 			return sessionsLoadedMsg{err: err}
 		}
-		return sessionsLoadedMsg{sessions: list.Sessions}
+		return sessionsLoadedMsg{sessions: sessions}
 	}
 }
 
@@ -1339,12 +1363,12 @@ func loadSessionCmd(c *client, sessionID string) tea.Cmd {
 			return sessionOpenedMsg{err: err}
 		}
 
-		list, err := c.listChats(ctx, sessionID, 1, 100)
+		chats, err := c.listAllChats(ctx, sessionID)
 		if err != nil {
 			return sessionOpenedMsg{err: err}
 		}
 
-		return sessionOpenedMsg{session: session, chats: list.Chats}
+		return sessionOpenedMsg{session: session, chats: chats}
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestParseArgs(t *testing.T) {
@@ -267,6 +268,58 @@ func TestCommandSuggestions(t *testing.T) {
 	}
 }
 
+func TestEnterRunsHighlightedCommand(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	m := newChatModel(c, meData{}, nil, nil, 80, 24)
+	m.input.SetValue("/")
+
+	m.suggestIndex = 6
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if updated.err != "" {
+		t.Fatalf("enter on a suggestion set an error: %q", updated.err)
+	}
+	if cmd == nil {
+		t.Fatal("enter on a suggestion should run the command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatal("command did not produce a message")
+	} else if _, ok := msg.(openHelpMsg); !ok {
+		t.Fatalf("command produced %T, want openHelpMsg", msg)
+	}
+}
+
+func TestCommandSuggestionsAlignInColumns(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	m := newChatModel(c, meData{}, nil, nil, 80, 24)
+	m.input.SetValue("/")
+
+	lines := strings.Split(stripANSI(m.suggestionsView()), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected several suggestions, got %d", len(lines))
+	}
+
+	wantWidth := len([]rune(lines[0]))
+	wantNameColumn := strings.Index(lines[0], "/")
+	for i, line := range lines {
+		if got := len([]rune(line)); got != wantWidth {
+			t.Fatalf("line %d width = %d, want %d: %q", i, got, wantWidth, line)
+		}
+		if got := strings.Index(line, "/"); got != wantNameColumn {
+			t.Fatalf("line %d name column = %d, want %d: %q", i, got, wantNameColumn, line)
+		}
+	}
+}
+
 func TestChatScrollsWithoutScrollbar(t *testing.T) {
 	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
 
@@ -296,7 +349,6 @@ func TestChatScrollsWithoutScrollbar(t *testing.T) {
 		t.Fatalf("chat window should not render a scrollbar:\n%s", got)
 	}
 
-	// Scrolling still works from the keyboard...
 	m.viewport.GotoBottom()
 	before := m.viewport.YOffset
 	scrolled, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyUp})
@@ -323,6 +375,109 @@ func TestChatScrollsWithoutScrollbar(t *testing.T) {
 	wheelDown, _ := wheelUp.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
 	if wheelDown.viewport.YOffset <= wheelUp.viewport.YOffset {
 		t.Fatalf("wheel down did not scroll: offset = %d", wheelDown.viewport.YOffset)
+	}
+}
+
+func TestHelpViewportScrollsAndFits(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	sizes := []struct{ width, height int }{
+		{80, 24},
+		{40, 12},
+		{120, 40},
+	}
+
+	for _, size := range sizes {
+		m := newAppModel(c, "http://127.0.0.1:1")
+		sized, _ := m.Update(tea.WindowSizeMsg{Width: size.width, Height: size.height})
+		m = sized.(appModel)
+
+		opened, _ := m.Update(openHelpMsg{})
+		m = opened.(appModel)
+		if !m.help {
+			t.Fatalf("%dx%d: help should be open", size.width, size.height)
+		}
+
+		// The content must overflow the viewport so scrolling is possible.
+		if m.helpViewport.TotalLineCount() <= m.helpViewport.VisibleLineCount() {
+			t.Fatalf("%dx%d: help not scrollable: %d lines in %d",
+				size.width, size.height, m.helpViewport.TotalLineCount(), m.helpViewport.VisibleLineCount())
+		}
+
+		// The rendered screen must fit exactly inside the terminal.
+		lines := strings.Split(m.View(), "\n")
+		if len(lines) > size.height {
+			t.Fatalf("%dx%d: help view is %d lines tall:\n%s", size.width, size.height, len(lines), m.View())
+		}
+		for i, line := range lines {
+			if width := lipgloss.Width(line); width > size.width {
+				t.Fatalf("%dx%d: line %d is %d wide: %q", size.width, size.height, i, width, line)
+			}
+		}
+
+		// Every help row must fit inside the panel so the viewport does not
+		// clip it horizontally.
+		_, inner := helpPanelWidth(size.width)
+		for _, line := range strings.Split(helpContent(inner), "\n") {
+			if width := lipgloss.Width(line); width > inner {
+				t.Fatalf("%dx%d: help row is %d wide, want <= %d: %q", size.width, size.height, width, inner, line)
+			}
+		}
+
+		// Keyboard scroll.
+		before := m.helpViewport.YOffset
+		scrolled, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = scrolled.(appModel)
+		if m.helpViewport.YOffset != before+1 {
+			t.Fatalf("%dx%d: down did not scroll: offset = %d, want %d", size.width, size.height, m.helpViewport.YOffset, before+1)
+		}
+
+		// Mouse wheel scroll.
+		wheeled, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+		m = wheeled.(appModel)
+		if m.helpViewport.YOffset <= before+1 {
+			t.Fatalf("%dx%d: wheel did not scroll: offset = %d", size.width, size.height, m.helpViewport.YOffset)
+		}
+
+		// esc closes and returns to the previous screen.
+		closed, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		m = closed.(appModel)
+		if m.help {
+			t.Fatalf("%dx%d: esc did not close help", size.width, size.height)
+		}
+	}
+}
+
+func TestHelpViewportReopensAtTop(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newAppModel(c, "http://127.0.0.1:1")
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = sized.(appModel)
+
+	opened, _ := m.Update(openHelpMsg{})
+	m = opened.(appModel)
+	m.helpViewport.GotoBottom()
+	if m.helpViewport.AtTop() {
+		t.Fatal("fixture should be scrolled")
+	}
+
+	m.help = false
+	reopened, _ := m.Update(openHelpMsg{})
+	m = reopened.(appModel)
+
+	if !m.helpViewport.AtTop() {
+		t.Fatalf("reopened help should start at the top, offset = %d", m.helpViewport.YOffset)
 	}
 }
 
@@ -1061,6 +1216,403 @@ func TestChatSentRefreshesCurrentSessionName(t *testing.T) {
 
 	if result.current == nil || result.current.Name != "Moving to a new city" {
 		t.Fatalf("current session = %+v, want the generated title", result.current)
+	}
+}
+
+func TestClientAccountEndpoints(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/profiles/exists":
+			writeTestJSON(w, http.StatusOK, profileExistsResponse{
+				Message: "profile status retrieved",
+				Data:    profileExistsData{Exists: true, UserID: "user-1"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/forgot-password":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode forgot body: %v", err)
+			}
+			if body["email"] != "a@b.com" {
+				t.Errorf("forgot email = %q", body["email"])
+			}
+			writeTestJSON(w, http.StatusOK, map[string]any{"message": "sent", "data": nil})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/reset-password":
+			var body struct {
+				Email       string `json:"email"`
+				Code        int    `json:"code"`
+				NewPassword string `json:"newPassword"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode reset body: %v", err)
+			}
+			if body.Email != "a@b.com" || body.Code != 123456 || body.NewPassword != "hunter22" {
+				t.Errorf("reset body = %+v", body)
+			}
+			writeTestJSON(w, http.StatusOK, map[string]any{"message": "reset", "data": nil})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/change-password":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode change body: %v", err)
+			}
+			if body["currentPassword"] != "oldpass1" || body["newPassword"] != "hunter22" {
+				t.Errorf("change body = %+v", body)
+			}
+			writeTestJSON(w, http.StatusOK, map[string]any{"message": "changed", "data": nil})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c, err := newClient(server.URL)
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	c.creds.AccessToken = "test-access"
+
+	exists, err := c.profileExists(t.Context())
+	if err != nil {
+		t.Fatalf("profileExists: %v", err)
+	}
+	if !exists {
+		t.Fatal("profileExists = false, want true")
+	}
+
+	if err := c.forgotPassword(t.Context(), "a@b.com"); err != nil {
+		t.Fatalf("forgotPassword: %v", err)
+	}
+	if err := c.resetPassword(t.Context(), "a@b.com", 123456, "hunter22"); err != nil {
+		t.Fatalf("resetPassword: %v", err)
+	}
+	if err := c.changePassword(t.Context(), "oldpass1", "hunter22"); err != nil {
+		t.Fatalf("changePassword: %v", err)
+	}
+
+	want := []string{
+		"GET /api/v1/profiles/exists",
+		"POST /api/v1/auth/forgot-password",
+		"POST /api/v1/auth/reset-password",
+		"POST /api/v1/auth/change-password",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls =\n%s\nwant\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestClientModeLookupEndpoints(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/modes/active":
+			writeTestJSON(w, http.StatusOK, modeResponse{
+				Message: "active mode retrieved",
+				Data:    modeData{ID: "builtin", Name: "Islamic", IsBuiltIn: true},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/modes/m1":
+			writeTestJSON(w, http.StatusOK, modeResponse{
+				Message: "mode retrieved",
+				Data:    modeData{ID: "m1", Name: "Stoic", Prompt: "Be calm."},
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/modes/active":
+			writeTestJSON(w, http.StatusOK, modeActionResponse{
+				Message: "active mode cleared",
+				Data:    modeActionData{UserID: "user-1"},
+			})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c, err := newClient(server.URL)
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	c.creds.AccessToken = "test-access"
+
+	active, err := c.getActiveMode(t.Context())
+	if err != nil {
+		t.Fatalf("getActiveMode: %v", err)
+	}
+	if active.ID != "builtin" {
+		t.Fatalf("active mode = %+v", active)
+	}
+
+	mode, err := c.getMode(t.Context(), "m1")
+	if err != nil {
+		t.Fatalf("getMode: %v", err)
+	}
+	if mode.Prompt != "Be calm." {
+		t.Fatalf("mode = %+v", mode)
+	}
+
+	if err := c.clearActiveMode(t.Context()); err != nil {
+		t.Fatalf("clearActiveMode: %v", err)
+	}
+
+	want := []string{
+		"GET /api/v1/modes/active",
+		"GET /api/v1/modes/m1",
+		"DELETE /api/v1/modes/active",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls =\n%s\nwant\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestClientPaginationWalksEveryPage(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+
+		switch r.URL.Path {
+		case "/api/v1/sessions":
+			if page == "2" {
+				writeTestJSON(w, http.StatusOK, sessionListResponse{
+					Data: sessionListData{
+						Sessions: []sessionData{{ID: "c"}},
+						Page:     2,
+						Limit:    pageSize,
+						Total:    3,
+						HasMore:  false,
+					},
+				})
+				return
+			}
+			writeTestJSON(w, http.StatusOK, sessionListResponse{
+				Data: sessionListData{
+					Sessions: []sessionData{{ID: "a"}, {ID: "b"}},
+					Page:     1,
+					Limit:    pageSize,
+					Total:    3,
+					HasMore:  true,
+				},
+			})
+		case "/api/v1/sessions/s1/chats":
+			if page == "2" {
+				writeTestJSON(w, http.StatusOK, chatListResponse{
+					Data: chatListData{Chats: []chatData{{ID: "old"}}, Page: 2, Limit: pageSize},
+				})
+				return
+			}
+			writeTestJSON(w, http.StatusOK, chatListResponse{
+				Data: chatListData{
+					Chats:   []chatData{{ID: "new"}},
+					Page:    1,
+					Limit:   pageSize,
+					Total:   2,
+					HasMore: true,
+				},
+			})
+		case "/api/v1/modes":
+			if page == "2" {
+				writeTestJSON(w, http.StatusOK, modeListResponse{
+					Data: modeListData{Modes: []modeData{{ID: "y"}}, Page: 2, Limit: pageSize, Total: 2},
+				})
+				return
+			}
+			writeTestJSON(w, http.StatusOK, modeListResponse{
+				Data: modeListData{
+					Modes:        []modeData{{ID: "x"}},
+					Page:         1,
+					Limit:        pageSize,
+					Total:        2,
+					HasMore:      true,
+					ActiveModeID: "x",
+				},
+			})
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c, err := newClient(server.URL)
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	c.creds.AccessToken = "test-access"
+
+	sessions, err := c.listAllSessions(t.Context())
+	if err != nil {
+		t.Fatalf("listAllSessions: %v", err)
+	}
+	if len(sessions) != 3 || sessions[2].ID != "c" {
+		t.Fatalf("sessions = %+v", sessions)
+	}
+
+	chats, err := c.listAllChats(t.Context(), "s1")
+	if err != nil {
+		t.Fatalf("listAllChats: %v", err)
+	}
+	if len(chats) != 2 || chats[1].ID != "old" {
+		t.Fatalf("chats = %+v", chats)
+	}
+
+	modes, err := c.listAllModes(t.Context())
+	if err != nil {
+		t.Fatalf("listAllModes: %v", err)
+	}
+	if len(modes.Modes) != 2 || modes.Modes[1].ID != "y" || modes.ActiveModeID != "x" {
+		t.Fatalf("modes = %+v", modes)
+	}
+}
+
+func TestAuthForgotAndResetPasswordFlow(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newAuthModel(c, "http://localhost:3000", 80, 30)
+
+	// ctrl+r from login opens the forgot-password form.
+	opened, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	if opened.mode != authForgot {
+		t.Fatalf("mode = %v, want authForgot", opened.mode)
+	}
+	if view := stripANSI(opened.View()); !strings.Contains(view, "Reset your password") {
+		t.Fatalf("forgot view missing title:\n%s", view)
+	}
+
+	// An invalid email is rejected before any request is made.
+	invalid, cmd := opened.submit()
+	if invalid.err == "" || cmd != nil {
+		t.Fatal("invalid email should be rejected locally")
+	}
+
+	invalid.email.SetValue("a@b.com")
+	pending, cmd := invalid.submit()
+	if !pending.loading || cmd == nil {
+		t.Fatal("valid email should start the request")
+	}
+
+	// A successful send moves to the reset form with the email filled in.
+	reset, _ := pending.Update(forgotResultMsg{email: "a@b.com"})
+	if reset.mode != authReset {
+		t.Fatalf("mode = %v, want authReset", reset.mode)
+	}
+	if reset.email.Value() != "a@b.com" || reset.focus != 1 {
+		t.Fatalf("reset form = email %q focus %d", reset.email.Value(), reset.focus)
+	}
+	if view := stripANSI(reset.View()); !strings.Contains(view, "Choose a new password") {
+		t.Fatalf("reset view missing title:\n%s", view)
+	}
+
+	// Validation covers the code and the new password.
+	reset.code.SetValue("12")
+	if weak, cmd := reset.submit(); weak.err == "" || cmd != nil {
+		t.Fatal("a short code should be rejected locally")
+	}
+
+	reset.code.SetValue("123456")
+	reset.password.SetValue("hunter22")
+	reset.confirm.SetValue("hunter23")
+	if mismatch, cmd := reset.submit(); mismatch.err == "" || cmd != nil {
+		t.Fatal("mismatched passwords should be rejected locally")
+	}
+
+	reset.confirm.SetValue("hunter22")
+	ready, cmd := reset.submit()
+	if !ready.loading || cmd == nil {
+		t.Fatal("a valid reset form should start the request")
+	}
+
+	back, _ := ready.Update(resetResultMsg{})
+	if back.mode != authLogin {
+		t.Fatalf("mode = %v, want authLogin after reset", back.mode)
+	}
+	if !strings.Contains(back.notice, "Password reset") {
+		t.Fatalf("notice = %q", back.notice)
+	}
+
+	// esc returns to login from both forms.
+	escaped, _ := reset.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if escaped.mode != authLogin {
+		t.Fatalf("esc mode = %v, want authLogin", escaped.mode)
+	}
+}
+
+func TestPasswordModelValidation(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newPasswordModel(c, 80, 24)
+	if view := stripANSI(m.View()); !strings.Contains(view, "Change password") {
+		t.Fatalf("password view missing title:\n%s", view)
+	}
+
+	if empty, cmd := m.save(); empty.err == "" || cmd != nil {
+		t.Fatal("an empty current password should be rejected")
+	}
+
+	m.current.SetValue("oldpass1")
+	m.next.SetValue("short")
+	if weak, cmd := m.save(); weak.err == "" || cmd != nil {
+		t.Fatal("a weak new password should be rejected")
+	}
+
+	m.next.SetValue("hunter22")
+	m.confirm.SetValue("hunter23")
+	if mismatch, cmd := m.save(); mismatch.err == "" || cmd != nil {
+		t.Fatal("mismatched passwords should be rejected")
+	}
+
+	m.confirm.SetValue("hunter22")
+	ready, cmd := m.save()
+	if !ready.saving || cmd == nil {
+		t.Fatal("a valid form should start saving")
+	}
+}
+
+func TestModePickerClearsActiveMode(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newChatModel(c, meData{}, nil, nil, 80, 24)
+	m.modes = newModePicker("", m.pickerInnerWidth())
+	m.modes.loading = false
+	m.modes.activeID = "builtin"
+
+	cleared, cmd := m.handleModesKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	if cmd == nil || !cleared.modes.loading {
+		t.Fatal("c should start clearing the active mode")
+	}
+
+	done, _ := cleared.handleModeCleared(modeClearedMsg{})
+	if done.modes.activeID != "" {
+		t.Fatalf("active id = %q, want empty", done.modes.activeID)
+	}
+	if done.modes.toast == "" {
+		t.Fatal("clearing should show a toast")
+	}
+
+	idle, _ := done.handleModesKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	if !strings.Contains(idle.modes.err, "No active mode") {
+		t.Fatalf("err = %q, want a no-active-mode message", idle.modes.err)
 	}
 }
 

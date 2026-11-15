@@ -19,6 +19,8 @@ const (
 	authLogin authMode = iota
 	authSignup
 	authVerify
+	authForgot
+	authReset
 )
 
 type authModel struct {
@@ -56,6 +58,15 @@ type signupResultMsg struct {
 
 type verifyResultMsg struct {
 	ok  bool
+	err error
+}
+
+type forgotResultMsg struct {
+	email string
+	err   error
+}
+
+type resetResultMsg struct {
 	err error
 }
 
@@ -169,21 +180,60 @@ func (m authModel) Update(msg tea.Msg) (authModel, tea.Cmd) {
 		}
 		return m, func() tea.Msg { return authenticatedMsg{} }
 
+	case forgotResultMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = inline(msg.err.Error())
+			return m, nil
+		}
+		m.mode = authReset
+		m.email.SetValue(msg.email)
+		m.email.CursorEnd()
+		m.code.SetValue("")
+		m.password.SetValue("")
+		m.confirm.SetValue("")
+		m.notice = "If the account exists, a reset code was sent to " + msg.email
+		m.err = ""
+		cmd := m.focusField(1)
+		return m, cmd
+
+	case resetResultMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = inline(msg.err.Error())
+			return m, nil
+		}
+		m.mode = authLogin
+		m.password.SetValue("")
+		m.confirm.SetValue("")
+		m.code.SetValue("")
+		m.notice = "Password reset. Log in with your new password."
+		m.err = ""
+		cmd := m.focusField(1)
+		return m, cmd
+
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+n":
-			if m.mode != authVerify {
+			if m.mode == authLogin || m.mode == authSignup {
 				m.mode = authSignup
 				m.err = ""
 				m.notice = ""
 				return m, m.focusField(0)
 			}
 		case "ctrl+l":
-			if m.mode != authVerify {
+			if m.mode == authLogin || m.mode == authSignup {
 				m.mode = authLogin
+				m.err = ""
+				m.notice = ""
+				return m, m.focusField(0)
+			}
+		case "ctrl+r":
+			if m.mode == authLogin {
+				m.mode = authForgot
 				m.err = ""
 				m.notice = ""
 				return m, m.focusField(0)
@@ -215,6 +265,10 @@ func (m *authModel) fields() []*textinput.Model {
 		return []*textinput.Model{&m.email, &m.password, &m.confirm}
 	case authVerify:
 		return []*textinput.Model{&m.code}
+	case authForgot:
+		return []*textinput.Model{&m.email}
+	case authReset:
+		return []*textinput.Model{&m.email, &m.code, &m.password, &m.confirm}
 	}
 	return nil
 }
@@ -388,6 +442,39 @@ func (m authModel) submit() (authModel, tea.Cmd) {
 
 		m.loading = true
 		return m, tea.Batch(verifyCmd(m.client, m.signupEmail, code), m.spinner.Tick)
+
+	case authForgot:
+		email := strings.ToLower(strings.TrimSpace(m.email.Value()))
+		if !looksLikeEmail(email) {
+			m.err = "Enter a valid email address."
+			return m, nil
+		}
+
+		m.loading = true
+		return m, tea.Batch(forgotPasswordCmd(m.client, email), m.spinner.Tick)
+
+	case authReset:
+		email := strings.ToLower(strings.TrimSpace(m.email.Value()))
+		code := strings.TrimSpace(m.code.Value())
+		password := m.password.Value()
+
+		switch {
+		case !looksLikeEmail(email):
+			m.err = "Enter a valid email address."
+			return m, nil
+		case len(code) != 6 || !allDigits(code):
+			m.err = "Enter the 6-digit code from your email."
+			return m, nil
+		case !strongEnough(password):
+			m.err = "Use at least 8 characters with a letter and a number."
+			return m, nil
+		case password != m.confirm.Value():
+			m.err = "Passwords do not match."
+			return m, nil
+		}
+
+		m.loading = true
+		return m, tea.Batch(resetPasswordCmd(m.client, email, code, password), m.spinner.Tick)
 	}
 
 	return m, nil
@@ -454,8 +541,24 @@ func (m authModel) layout() (string, []authFieldBox) {
 
 	case authVerify:
 		write(titleStyle.Render("Check your email") + "\n")
-		write(mutedStyle.Render("Enter the code sent to " + truncate(m.signupEmail, inner-4)) + "\n\n")
+		write(mutedStyle.Render("Enter the code sent to "+truncate(m.signupEmail, inner-4)) + "\n\n")
 		field(0, "Verification code", m.code, true)
+
+	case authForgot:
+		write(titleStyle.Render("Reset your password") + "\n")
+		write(mutedStyle.Render("Enter your email and we'll send you a reset code.") + "\n\n")
+		field(0, "Email", m.email, m.focus == 0)
+
+	case authReset:
+		write(titleStyle.Render("Choose a new password") + "\n")
+		write(mutedStyle.Render("Enter the code sent to "+truncate(m.email.Value(), inner-4)) + "\n\n")
+		field(0, "Email", m.email, m.focus == 0)
+		write("\n")
+		field(1, "Reset code", m.code, m.focus == 1)
+		write("\n")
+		field(2, "New password", m.password, m.focus == 2)
+		write("\n")
+		field(3, "Confirm new password", m.confirm, m.focus == 3)
 	}
 
 	write("\n\n")
@@ -502,13 +605,21 @@ func (m authModel) footer() string {
 	case authLogin:
 		return key("[enter]") + mutedStyle.Render(" log in    ") +
 			key("[ctrl+n]") + mutedStyle.Render(" sign up    ") +
-			key("[ctrl+c]") + mutedStyle.Render(" quit")
+			key("[ctrl+c]") + mutedStyle.Render(" quit\n") +
+			key("[ctrl+r]") + mutedStyle.Render(" forgot password")
 	case authSignup:
 		return key("[enter]") + mutedStyle.Render(" sign up    ") +
 			key("[tab]") + mutedStyle.Render(" next    ") +
 			key("[esc]") + mutedStyle.Render(" back")
 	case authVerify:
 		return key("[enter]") + mutedStyle.Render(" verify    ") +
+			key("[esc]") + mutedStyle.Render(" back")
+	case authForgot:
+		return key("[enter]") + mutedStyle.Render(" send code    ") +
+			key("[esc]") + mutedStyle.Render(" back")
+	case authReset:
+		return key("[enter]") + mutedStyle.Render(" reset    ") +
+			key("[tab]") + mutedStyle.Render(" next    ") +
 			key("[esc]") + mutedStyle.Render(" back")
 	}
 	return ""
@@ -551,6 +662,25 @@ func verifyCmd(c *client, email, code string) tea.Cmd {
 			return verifyResultMsg{err: err}
 		}
 		return verifyResultMsg{ok: true}
+	}
+}
+
+func forgotPasswordCmd(c *client, email string) tea.Cmd {
+	return func() tea.Msg {
+		err := c.forgotPassword(context.Background(), email)
+		return forgotResultMsg{email: email, err: err}
+	}
+}
+
+func resetPasswordCmd(c *client, email, code, password string) tea.Cmd {
+	return func() tea.Msg {
+		value, err := parseVerificationCode(code)
+		if err != nil {
+			return resetResultMsg{err: err}
+		}
+
+		err = c.resetPassword(context.Background(), email, value, password)
+		return resetResultMsg{err: err}
 	}
 }
 

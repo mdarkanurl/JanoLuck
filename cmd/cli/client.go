@@ -415,6 +415,19 @@ type modeActionResponse struct {
 	Data    modeActionData `json:"data"`
 }
 
+type profileExistsData struct {
+	Exists bool   `json:"exists"`
+	UserID string `json:"userId"`
+}
+
+type profileExistsResponse struct {
+	Message string            `json:"message"`
+	Data    profileExistsData `json:"data"`
+}
+
+const pageSize = 100
+const maxPages = 100
+
 // API methods.
 
 func (c *client) signup(ctx context.Context, email, password string) error {
@@ -499,6 +512,19 @@ func (c *client) changePassword(ctx context.Context, currentPassword, newPasswor
 	return err
 }
 
+func (c *client) profileExists(ctx context.Context) (bool, error) {
+	raw, err := c.do(ctx, http.MethodGet, "/profiles/exists", nil, true)
+	if err != nil {
+		return false, err
+	}
+
+	resp, err := decodeResponse[profileExistsResponse](raw)
+	if err != nil {
+		return false, err
+	}
+	return resp.Data.Exists, nil
+}
+
 func (c *client) getProfile(ctx context.Context) (profileData, error) {
 	raw, err := c.do(ctx, http.MethodGet, "/profiles", nil, true)
 	if err != nil {
@@ -579,6 +605,24 @@ func (c *client) listSessions(ctx context.Context, page, limit int) (sessionList
 		return sessionListData{}, err
 	}
 	return resp.Data, nil
+}
+
+func (c *client) listAllSessions(ctx context.Context) ([]sessionData, error) {
+	var all []sessionData
+
+	for page := 1; page <= maxPages; page++ {
+		list, err := c.listSessions(ctx, page, pageSize)
+		if err != nil {
+			return nil, err
+		}
+
+		all = append(all, list.Sessions...)
+		if !list.HasMore || len(list.Sessions) == 0 {
+			break
+		}
+	}
+
+	return all, nil
 }
 
 func (c *client) getSession(ctx context.Context, sessionID string) (sessionData, error) {
@@ -839,6 +883,24 @@ func (c *client) listChats(ctx context.Context, sessionID string, page, limit in
 	return resp.Data, nil
 }
 
+func (c *client) listAllChats(ctx context.Context, sessionID string) ([]chatData, error) {
+	var all []chatData
+
+	for page := 1; page <= maxPages; page++ {
+		list, err := c.listChats(ctx, sessionID, page, pageSize)
+		if err != nil {
+			return nil, err
+		}
+
+		all = append(all, list.Chats...)
+		if !list.HasMore || len(list.Chats) == 0 {
+			break
+		}
+	}
+
+	return all, nil
+}
+
 func (c *client) listModes(ctx context.Context, page, limit int) (modeListData, error) {
 	query := url.Values{}
 	query.Set("page", fmt.Sprint(page))
@@ -854,6 +916,28 @@ func (c *client) listModes(ctx context.Context, page, limit int) (modeListData, 
 		return modeListData{}, err
 	}
 	return resp.Data, nil
+}
+
+func (c *client) listAllModes(ctx context.Context) (modeListData, error) {
+	result := modeListData{Page: 1, Limit: pageSize}
+
+	for page := 1; page <= maxPages; page++ {
+		list, err := c.listModes(ctx, page, pageSize)
+		if err != nil {
+			return modeListData{}, err
+		}
+
+		result.Modes = append(result.Modes, list.Modes...)
+		result.Total = list.Total
+		if list.ActiveModeID != "" {
+			result.ActiveModeID = list.ActiveModeID
+		}
+		if !list.HasMore || len(list.Modes) == 0 {
+			break
+		}
+	}
+
+	return result, nil
 }
 
 func (c *client) createMode(ctx context.Context, name, prompt string) (modeData, error) {
@@ -893,9 +977,40 @@ func (c *client) deleteMode(ctx context.Context, modeID string) error {
 	return err
 }
 
+func (c *client) getMode(ctx context.Context, modeID string) (modeData, error) {
+	raw, err := c.do(ctx, http.MethodGet, "/modes/"+url.PathEscape(modeID), nil, true)
+	if err != nil {
+		return modeData{}, err
+	}
+
+	resp, err := decodeResponse[modeResponse](raw)
+	if err != nil {
+		return modeData{}, err
+	}
+	return resp.Data, nil
+}
+
 func (c *client) setActiveMode(ctx context.Context, modeID string) error {
 	_, err := c.do(ctx, http.MethodPut, "/modes/active", map[string]string{
 		"modeId": modeID,
 	}, true)
+	return err
+}
+
+func (c *client) getActiveMode(ctx context.Context) (modeData, error) {
+	raw, err := c.do(ctx, http.MethodGet, "/modes/active", nil, true)
+	if err != nil {
+		return modeData{}, err
+	}
+
+	resp, err := decodeResponse[modeResponse](raw)
+	if err != nil {
+		return modeData{}, err
+	}
+	return resp.Data, nil
+}
+
+func (c *client) clearActiveMode(ctx context.Context) error {
+	_, err := c.do(ctx, http.MethodDelete, "/modes/active", nil, true)
 	return err
 }

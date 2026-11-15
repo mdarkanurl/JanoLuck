@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -18,6 +19,7 @@ const (
 	screenAuth
 	screenChat
 	screenProfile
+	screenPassword
 )
 
 type appModel struct {
@@ -32,11 +34,13 @@ type appModel struct {
 	loadingErr string
 	me         meData
 
-	auth    authModel
-	chat    chatModel
-	profile profileModel
+	auth     authModel
+	chat     chatModel
+	profile  profileModel
+	password passwordModel
 
-	help bool
+	help         bool
+	helpViewport viewport.Model
 }
 
 type bootstrapMsg struct {
@@ -68,14 +72,16 @@ func newAppModel(c *client, apiURL string) appModel {
 	spin.Style = primaryStyle
 
 	model := appModel{
-		client: c,
-		apiURL: apiURL,
-		width:  80,
-		height: 24,
-		screen: screenLoading,
-		auth:   newAuthModel(c, apiURL, 80, 24),
+		client:       c,
+		apiURL:       apiURL,
+		width:        80,
+		height:       24,
+		screen:       screenLoading,
+		auth:         newAuthModel(c, apiURL, 80, 24),
+		helpViewport: viewport.New(0, 0),
 	}
 	model.spinner = spin
+	model.resizeHelp()
 
 	if !c.loggedIn() {
 		model.screen = screenAuth
@@ -99,7 +105,16 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.auth.setSize(m.width, m.height)
 		m.chat.setSize(m.width, m.height)
 		m.profile.setSize(m.width, m.height)
+		m.password.setSize(m.width, m.height)
+		m.resizeHelp()
 		return m, nil
+
+	case tea.MouseMsg:
+		if m.help {
+			var cmd tea.Cmd
+			m.helpViewport, cmd = m.helpViewport.Update(msg)
+			return m, cmd
+		}
 
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
@@ -113,8 +128,13 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.screen == screenChat {
 					m.chat.focusInput()
 				}
+				return m, nil
 			}
-			return m, nil
+
+			// While the help panel is open, every other key scrolls it.
+			var cmd tea.Cmd
+			m.helpViewport, cmd = m.helpViewport.Update(msg)
+			return m, cmd
 		}
 
 		if m.screen == screenChat && msg.String() == "ctrl+h" {
@@ -123,6 +143,12 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.screen == screenProfile && msg.String() == "esc" && !m.profile.saving {
+			m.screen = screenChat
+			m.chat.focusInput()
+			return m, nil
+		}
+
+		if m.screen == screenPassword && msg.String() == "esc" && !m.password.saving {
 			m.screen = screenChat
 			m.chat.focusInput()
 			return m, nil
@@ -142,12 +168,19 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case openHelpMsg:
 		m.help = true
+		m.resizeHelp()
+		m.helpViewport.GotoTop()
 		return m, nil
 
 	case openProfileMsg:
 		m.profile = newProfileModel(m.client, m.me, m.chat.profile, m.width, m.height)
 		m.screen = screenProfile
 		return m, m.profile.Init()
+
+	case openPasswordMsg:
+		m.password = newPasswordModel(m.client, m.width, m.height)
+		m.screen = screenPassword
+		return m, m.password.Init()
 
 	case bootstrapMsg:
 		return m.handleBootstrap(msg)
@@ -175,6 +208,12 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = screenChat
 		m.chat.focusInput()
 		return m, nil
+
+	case passwordChangedMsg:
+		m.chat.toast = "Password changed."
+		m.screen = screenChat
+		m.chat.focusInput()
+		return m, nil
 	}
 
 	switch m.screen {
@@ -191,6 +230,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case screenProfile:
 		var cmd tea.Cmd
 		m.profile, cmd = m.profile.Update(msg)
+		return m, cmd
+	case screenPassword:
+		var cmd tea.Cmd
+		m.password, cmd = m.password.Update(msg)
 		return m, cmd
 	}
 
@@ -238,7 +281,7 @@ func (m appModel) View() string {
 	}
 
 	if m.help {
-		return helpView(m.width, m.height)
+		return m.helpView()
 	}
 
 	switch m.screen {
@@ -250,6 +293,8 @@ func (m appModel) View() string {
 		return m.chat.View()
 	case screenProfile:
 		return m.profile.View()
+	case screenPassword:
+		return m.password.View()
 	}
 
 	return ""
@@ -287,21 +332,54 @@ func (m appModel) loadingView() string {
 	return centeredCard(m.width, m.height, block)
 }
 
-func helpView(width, height int) string {
-	cardWidth := min(68, max(40, width-4))
+// helpPanelWidth returns the total width of the help panel and the width
+// available to its contents, inside the border and horizontal padding.
+func helpPanelWidth(termWidth int) (panelWidth, inner int) {
+	panelWidth = min(72, max(36, termWidth-4))
+	if termWidth > 0 {
+		panelWidth = min(panelWidth, termWidth)
+	}
+	return panelWidth, max(12, panelWidth-6)
+}
 
+// helpPanelHeight returns the height of the help panel in lines. It leaves one
+// blank line above and below the panel when the terminal has room.
+func helpPanelHeight(termHeight int) int {
+	height := min(34, termHeight-2)
+	if termHeight > 0 {
+		height = min(height, termHeight)
+	}
+	return max(6, height)
+}
+
+// resizeHelp sizes the scrollable help area to the current terminal.
+func (m *appModel) resizeHelp() {
+	if m.width <= 0 || m.height <= 0 {
+		return
+	}
+
+	_, inner := helpPanelWidth(m.width)
+	panelHeight := helpPanelHeight(m.height)
+
+	m.helpViewport.Width = inner
+	// Border (2), title (1), hairline (1) and footer (1) are not scrollable.
+	m.helpViewport.Height = max(2, panelHeight-5)
+	m.helpViewport.SetContent(helpContent(inner))
+}
+
+func helpContent(width int) string {
 	entry := func(k, description string) string {
-		return accentStyle.Render(fmt.Sprintf("%-12s", k)) + mutedStyle.Render(description)
+		key := k + strings.Repeat(" ", max(0, 12-lipgloss.Width(k)))
+		return accentStyle.Render(key) + mutedStyle.Render(truncate(description, max(8, width-12)))
 	}
 
 	lines := []string{
-		titleStyle.Render("Commands & shortcuts"),
-		"",
 		mutedStyle.Render("COMMANDS"),
 		entry("/sessions", "browse and open previous chats"),
 		entry("/modes", "choose or edit prediction modes"),
 		entry("/new", "start a new conversation"),
 		entry("/profile", "edit your profile"),
+		entry("/password", "change your password"),
 		entry("/logout", "log out"),
 		entry("/help", "show this help"),
 		entry("/quit", "quit JanoLuck"),
@@ -328,17 +406,53 @@ func helpView(width, height int) string {
 		mutedStyle.Render("MODES"),
 		entry("↑ / ↓", "move through modes"),
 		entry("enter", "make the selected mode active"),
+		entry("c", "clear the active mode"),
 		entry("n", "create a custom mode"),
 		entry("e", "edit the selected custom mode"),
 		entry("d", "delete the selected custom mode"),
 		entry("/", "focus the mode filter"),
 		entry("esc", "close the picker"),
-		"",
-		mutedStyle.Render("Press esc or ctrl+h to close."),
 	}
 
-	content := strings.Join(lines, "\n")
-	return centeredCard(width, height, cardStyle(cardWidth).Render(content))
+	return strings.Join(lines, "\n")
+}
+
+func (m appModel) helpView() string {
+	_, inner := helpPanelWidth(m.width)
+	panelHeight := helpPanelHeight(m.height)
+
+	title := titleStyle.Render("Commands & shortcuts")
+	if m.helpViewport.TotalLineCount() > m.helpViewport.VisibleLineCount() {
+		percent := int(m.helpViewport.ScrollPercent()*100 + 0.5)
+		title = spread(title, mutedStyle.Render(fmt.Sprintf("%d%%", percent)), inner)
+	}
+
+	footer := "↑↓ scroll · pgup/pgdn page · ctrl+u/d half page · esc close"
+	if inner < 52 {
+		footer = "↑↓ scroll · esc close"
+	}
+	if m.helpViewport.AtBottom() {
+		footer = "esc close"
+	}
+
+	body := title + "\n" +
+		hairlineStyle.Render(strings.Repeat("─", max(1, inner))) + "\n" +
+		m.helpViewport.View() + "\n" +
+		mutedStyle.Render(truncate(footer, inner))
+
+	panel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorPrimary).
+		Padding(0, 2).
+		Width(inner + 4).
+		Render(body)
+
+	// Guard against a panel taller than the terminal on very short windows.
+	panel = lipgloss.NewStyle().
+		MaxHeight(max(1, panelHeight)).
+		Render(panel)
+
+	return centeredCard(m.width, m.height, panel)
 }
 
 func cardStyle(width int) lipgloss.Style {
@@ -358,19 +472,21 @@ func bootstrapCmd(c *client) tea.Cmd {
 			return bootstrapMsg{err: err}
 		}
 
-		list, err := c.listSessions(ctx, 1, 50)
+		sessions, err := c.listAllSessions(ctx)
 		if err != nil {
 			return bootstrapMsg{err: err}
 		}
 
 		var profile *profileData
-		if value, err := c.getProfile(ctx); err == nil {
-			profile = &value
+		if exists, existsErr := c.profileExists(ctx); existsErr == nil && exists {
+			if value, profileErr := c.getProfile(ctx); profileErr == nil {
+				profile = &value
+			}
 		}
 
 		return bootstrapMsg{
 			me:       me,
-			sessions: list.Sessions,
+			sessions: sessions,
 			profile:  profile,
 		}
 	}

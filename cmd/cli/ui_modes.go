@@ -55,6 +55,10 @@ type modeDeletedMsg struct {
 	err    error
 }
 
+type modeClearedMsg struct {
+	err error
+}
+
 type modeSavedMsg struct {
 	mode    modeData
 	editing bool
@@ -255,6 +259,8 @@ func (m chatModel) handleModesKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 		return m.openModeForm(true)
 	case "d", "ctrl+d":
 		return m.confirmDeleteMode()
+	case "c":
+		return m.clearActiveModeSelection()
 	}
 
 	return m, nil
@@ -390,6 +396,25 @@ func (m chatModel) activateModeSelection() (chatModel, tea.Cmd) {
 	return m, tea.Batch(setActiveModeCmd(m.client, mode.ID), m.spinner.Tick)
 }
 
+func (m chatModel) clearActiveModeSelection() (chatModel, tea.Cmd) {
+	if m.modes == nil {
+		return m, nil
+	}
+
+	if m.modes.activeID == "" {
+		m.modes.toast = ""
+		m.modes.err = "No active mode to clear."
+		return m, nil
+	}
+
+	m.modes.loading = true
+	m.modes.loadingText = "Clearing active mode..."
+	m.modes.err = ""
+	m.modes.toast = ""
+
+	return m, tea.Batch(clearActiveModeCmd(m.client), m.spinner.Tick)
+}
+
 func (m chatModel) confirmDeleteMode() (chatModel, tea.Cmd) {
 	matches := m.modeMatches()
 	if m.modes == nil || len(matches) == 0 || m.modes.index >= len(matches) {
@@ -480,6 +505,28 @@ func (m chatModel) handleModeDeleted(msg modeDeletedMsg) (chatModel, tea.Cmd) {
 	m.modes.toast = "Mode deleted."
 	m.clampModeIndex()
 
+	return m, nil
+}
+
+func (m chatModel) handleModeCleared(msg modeClearedMsg) (chatModel, tea.Cmd) {
+	if m.modes == nil {
+		return m, nil
+	}
+
+	m.modes.loading = false
+	m.modes.loadingText = ""
+
+	if msg.err != nil {
+		if isSessionError(msg.err) {
+			return m, expireSessionCmd(msg.err)
+		}
+		m.modes.err = inline(msg.err.Error())
+		return m, nil
+	}
+
+	m.modes.activeID = ""
+	m.modes.err = ""
+	m.modes.toast = "Active mode cleared."
 	return m, nil
 }
 
@@ -668,7 +715,7 @@ func (m chatModel) modeRow(mode modeData, index, width int) string {
 }
 
 func (m chatModel) modesFooter(inner int) string {
-	footer := "↑↓ move · enter use · n new · e edit · d delete · / filter · esc close"
+	footer := "↑↓ move · enter use · c clear · n new · e edit · d delete · / filter · esc close"
 	if m.modes != nil && m.modes.filtering {
 		footer = "type to filter · ↑↓ move · enter use · esc done"
 	}
@@ -756,7 +803,7 @@ func expireSessionCmd(err error) tea.Cmd {
 
 func listModesCmd(c *client) tea.Cmd {
 	return func() tea.Msg {
-		list, err := c.listModes(context.Background(), 1, 100)
+		list, err := c.listAllModes(context.Background())
 		return modesLoadedMsg{list: list, err: err}
 	}
 }
@@ -765,6 +812,13 @@ func setActiveModeCmd(c *client, modeID string) tea.Cmd {
 	return func() tea.Msg {
 		err := c.setActiveMode(context.Background(), modeID)
 		return modeActivatedMsg{modeID: modeID, err: err}
+	}
+}
+
+func clearActiveModeCmd(c *client) tea.Cmd {
+	return func() tea.Msg {
+		err := c.clearActiveMode(context.Background())
+		return modeClearedMsg{err: err}
 	}
 }
 
