@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mdarkanurl/JanoLuck/internal/httpx"
 )
 
 const (
@@ -81,10 +82,9 @@ type ChatActionResponse struct {
 	Data    ChatActionData `json:"data"`
 }
 
-type ValidationError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
-}
+// ValidationError and ErrorResponse are shared with the other handlers so
+// every endpoint reports failures the same way.
+type ValidationError = httpx.ValidationError
 
 // Stream event types sent to the client while a prediction is generated.
 const (
@@ -101,7 +101,4 @@ type ChatStreamPayload struct {
 	Chat    *ChatData `json:"chat,omitempty"`
 }
 
-type ErrorResponse struct {
-	Error  string            `json:"error"`
-	Fields []ValidationError `json:"fields,omitempty"`
-}
+type ErrorResponse = httpx.ErrorResponse

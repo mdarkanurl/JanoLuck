@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/mdarkanurl/JanoLuck/internal/auth"
+	"github.com/mdarkanurl/JanoLuck/internal/httpx"
 	"github.com/mdarkanurl/JanoLuck/internal/testutil"
 )
 
@@ -62,7 +63,7 @@ func decodeChatResponse(t *testing.T, rr *httptest.ResponseRecorder, v any) {
 
 func TestWriteJSONAndWriteError(t *testing.T) {
 	rr := httptest.NewRecorder()
-	writeJSON(rr, http.StatusCreated, map[string]string{"ok": "yes"})
+	httpx.WriteJSON(rr, http.StatusCreated, map[string]string{"ok": "yes"})
 
 	if rr.Code != http.StatusCreated {
 		t.Errorf("status = %d, want 201", rr.Code)
@@ -89,7 +90,7 @@ func TestWriteJSONAndWriteError(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			writeError(rr, http.StatusBadRequest, tt.msg)
+			httpx.WriteError(rr, http.StatusBadRequest, tt.msg)
 			if got := decodeChatError(t, rr).Error; got != tt.want {
 				t.Errorf("error = %q, want %q", got, tt.want)
 			}
@@ -164,13 +165,13 @@ func TestValidationMessage(t *testing.T) {
 			value: struct {
 				Email string `validate:"email"`
 			}{Email: "bad"},
-			want: "failed on 'email' validation",
+			want: "must be a valid email address",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validate.Struct(tt.value)
+			err := httpx.Validator.Struct(tt.value)
 			if err == nil {
 				t.Fatal("expected validation error")
 			}
@@ -181,8 +182,8 @@ func TestValidationMessage(t *testing.T) {
 			if len(fields) != 1 {
 				t.Fatalf("got %d validation errors, want 1", len(fields))
 			}
-			if got := validationMessage(fields[0]); got != tt.want {
-				t.Errorf("validationMessage() = %q, want %q", got, tt.want)
+			if got := httpx.ValidationMessage(fields[0]); got != tt.want {
+				t.Errorf("httpx.ValidationMessage() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -190,7 +191,7 @@ func TestValidationMessage(t *testing.T) {
 
 func TestValidateRequestWritesStructuredErrors(t *testing.T) {
 	rr := httptest.NewRecorder()
-	if validateRequest(CreateChatRequest{}, rr) {
+	if httpx.ValidateRequest(CreateChatRequest{}, rr) {
 		t.Fatal("expected empty request to be invalid")
 	}
 	if rr.Code != http.StatusBadRequest {
@@ -210,7 +211,7 @@ func TestDecodeJSON(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"content":"hi"}`))
-		got, ok := decodeJSON[CreateChatRequest](rr, req)
+		got, ok := httpx.DecodeJSON[CreateChatRequest](rr, req)
 		if !ok || got.Content != "hi" {
 			t.Errorf("decodeJSON() = (%+v, %v), want content hi", got, ok)
 		}
@@ -219,7 +220,7 @@ func TestDecodeJSON(t *testing.T) {
 	t.Run("malformed", func(t *testing.T) {
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"content":`))
-		if _, ok := decodeJSON[CreateChatRequest](rr, req); ok {
+		if _, ok := httpx.DecodeJSON[CreateChatRequest](rr, req); ok {
 			t.Error("expected decode to fail")
 		}
 		if rr.Code != http.StatusBadRequest {
@@ -231,11 +232,11 @@ func TestDecodeJSON(t *testing.T) {
 		rr := httptest.NewRecorder()
 		body := `{"content":"` + strings.Repeat("a", 1<<20) + `"}`
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-		if _, ok := decodeJSON[CreateChatRequest](rr, req); ok {
+		if _, ok := httpx.DecodeJSON[CreateChatRequest](rr, req); ok {
 			t.Error("expected oversized body to fail")
 		}
-		if rr.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rr.Code)
+		if rr.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("status = %d, want 413", rr.Code)
 		}
 	})
 }
@@ -265,20 +266,20 @@ func TestPathParam(t *testing.T) {
 
 func TestParsePagination(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/chats", nil)
-	page, limit, ok := parsePagination(httptest.NewRecorder(), r)
+	page, limit, ok := httpx.ParsePagination(httptest.NewRecorder(), r)
 	if !ok || page != DefaultPage || limit != DefaultLimit {
 		t.Errorf("defaults = (%d, %d, %v), want (%d, %d, true)", page, limit, ok, DefaultPage, DefaultLimit)
 	}
 
 	r = httptest.NewRequest(http.MethodGet, "/chats?page=3&limit=5", nil)
-	page, limit, ok = parsePagination(httptest.NewRecorder(), r)
+	page, limit, ok = httpx.ParsePagination(httptest.NewRecorder(), r)
 	if !ok || page != 3 || limit != 5 {
 		t.Errorf("values = (%d, %d, %v), want (3, 5, true)", page, limit, ok)
 	}
 
 	for _, target := range []string{"/chats?page=x", "/chats?limit=1.5"} {
 		rr := httptest.NewRecorder()
-		if _, _, ok := parsePagination(rr, httptest.NewRequest(http.MethodGet, target, nil)); ok {
+		if _, _, ok := httpx.ParsePagination(rr, httptest.NewRequest(http.MethodGet, target, nil)); ok {
 			t.Errorf("%s: expected parse failure", target)
 		}
 		if rr.Code != http.StatusBadRequest {

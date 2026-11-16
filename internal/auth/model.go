@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/mdarkanurl/JanoLuck/internal/httpx"
 )
 
 type VerificationCode int
+
+func (VerificationCode) IsVerificationCode() bool { return true }
 
 func (c *VerificationCode) UnmarshalJSON(data []byte) error {
 	var n int
@@ -80,12 +84,7 @@ type VerifyEmailResponse struct {
 	Data    AuthTokens `json:"data"`
 }
 
-type ValidationError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
-}
-
-type ErrorResponse struct {
-	Error  string            `json:"error"`
-	Fields []ValidationError `json:"fields,omitempty"`
-}
+type (
+	ValidationError = httpx.ValidationError
+	ErrorResponse   = httpx.ErrorResponse
+)

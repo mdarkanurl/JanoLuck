@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mdarkanurl/JanoLuck/internal/analytics"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
+	"github.com/mdarkanurl/JanoLuck/internal/httpx"
 	"github.com/mdarkanurl/JanoLuck/internal/moderation"
 	"github.com/mdarkanurl/JanoLuck/internal/outbox"
 )
@@ -64,8 +65,8 @@ func WithLogger(logger *slog.Logger) ServiceOption {
 }
 
 const (
-	DefaultPage  = 1
-	DefaultLimit = 20
+	DefaultPage  = httpx.DefaultPage
+	DefaultLimit = httpx.DefaultLimit
 	MaxPage      = 1_000_000
 	MaxLimit     = 100
 

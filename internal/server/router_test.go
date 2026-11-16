@@ -81,6 +81,35 @@ func TestRouterRateLimitsEveryRequest(t *testing.T) {
 	}
 }
 
+func TestRouterAuthResponsesAreNotCacheable(t *testing.T) {
+	router := newTestRouter(&recordingLimiter{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
+	req.RemoteAddr = "203.0.113.5:1234"
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	if got := rec.Header().Get("Pragma"); got != "no-cache" {
+		t.Errorf("Pragma = %q, want no-cache", got)
+	}
+}
+
+func TestRouterDoesNotMarkOtherResponsesNoStore(t *testing.T) {
+	router := newTestRouter(&recordingLimiter{})
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.RemoteAddr = "203.0.113.5:1234"
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Cache-Control"); got != "" {
+		t.Errorf("Cache-Control = %q, want empty", got)
+	}
+}
+
 func TestRouterAppliesStricterLimitToAuthEndpoints(t *testing.T) {
 	limiter := &recordingLimiter{}
 	router := newTestRouter(limiter)

@@ -1,156 +1,39 @@
 package modes
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/mdarkanurl/JanoLuck/internal/auth"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
+	"github.com/mdarkanurl/JanoLuck/internal/httpx"
 )
 
 type Handler struct {
 	service *Service
 }
 
-var validate = validator.New()
-
 func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg any) {
-	switch v := msg.(type) {
-	case ErrorResponse:
-		writeJSON(w, status, v)
-	case string:
-		writeJSON(w, status, ErrorResponse{Error: v})
-	case error:
-		writeJSON(w, status, ErrorResponse{Error: v.Error()})
-	default:
-		writeJSON(w, status, ErrorResponse{Error: "internal server error"})
-	}
-}
-
-func validationMessage(e validator.FieldError) string {
-	switch e.Tag() {
-	case "required":
-		return fmt.Sprintf("%s is required", e.Field())
-	case "min", "max":
-		switch e.Type().Kind() {
-		case reflect.Slice, reflect.Array:
-			if e.Tag() == "min" {
-				return fmt.Sprintf("must contain at least %s item(s)", e.Param())
-			}
-			return fmt.Sprintf("must contain at most %s item(s)", e.Param())
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-			reflect.Float32, reflect.Float64:
-			if e.Tag() == "min" {
-				return fmt.Sprintf("must be at least %s", e.Param())
-			}
-			return fmt.Sprintf("must be at most %s", e.Param())
-		}
-		if e.Tag() == "min" {
-			return fmt.Sprintf("must be at least %s characters", e.Param())
-		}
-		return fmt.Sprintf("must be at most %s characters", e.Param())
-	case "dive":
-		return "contains an invalid item"
-	default:
-		return fmt.Sprintf("failed on '%s' validation", e.Tag())
-	}
-}
-
-func validateRequest[T any](req T, w http.ResponseWriter) bool {
-	if err := validate.Struct(req); err != nil {
-		var fields []ValidationError
-
-		for _, e := range err.(validator.ValidationErrors) {
-			field := strings.ToLower(e.StructField())
-			if ns := e.Namespace(); strings.Contains(ns, "[") {
-				field = strings.ToLower(ns[strings.Index(ns, ".")+1:])
-			}
-			fields = append(fields, ValidationError{
-				Field:   field,
-				Message: validationMessage(e),
-			})
-		}
-
-		writeError(w, http.StatusBadRequest, ErrorResponse{
-			Error:  "invalid_input",
-			Fields: fields,
-		})
-		return false
-	}
-	return true
-}
-
-func decodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
-	var v T
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
-		writeError(w, http.StatusBadRequest, ErrorResponse{
-			Error: "invalid request body",
-		})
-		return v, false
-	}
-	return v, true
 }
 
 func pathParam(w http.ResponseWriter, r *http.Request, name string) (string, bool) {
 	value := strings.TrimSpace(chi.URLParam(r, name))
 	if value == "" {
-		writeError(w, http.StatusNotFound, "not found")
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 		return "", false
 	}
 	return value, true
 }
 
-func parsePagination(w http.ResponseWriter, r *http.Request) (int, int, bool) {
-	q := r.URL.Query()
-
-	page := DefaultPage
-	if raw := strings.TrimSpace(q.Get("page")); raw != "" {
-		v, err := strconv.Atoi(raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, ErrorResponse{Error: "page must be an integer"})
-			return 0, 0, false
-		}
-		page = v
-	}
-
-	limit := DefaultLimit
-	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
-		v, err := strconv.Atoi(raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, ErrorResponse{Error: "limit must be an integer"})
-			return 0, 0, false
-		}
-		limit = v
-	}
-
-	return page, limit, true
-}
-
 func userIDFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
 	userID, _, ok := auth.UserIDFromContext(r.Context())
 	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		httpx.WriteError(w, http.StatusUnauthorized, "invalid or expired token")
 		return "", false
 	}
 	return userID, true
@@ -159,15 +42,15 @@ func userIDFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
 func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidInput):
-		writeError(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
+		httpx.WriteError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrAlreadyExists):
-		writeError(w, http.StatusConflict, err.Error())
+		httpx.WriteError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrForbidden):
-		writeError(w, http.StatusForbidden, err.Error())
+		httpx.WriteError(w, http.StatusForbidden, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, ErrInternal.Error())
+		httpx.WriteError(w, http.StatusInternalServerError, ErrInternal.Error())
 	}
 }
 
@@ -189,7 +72,7 @@ func toModeData(m database.Mode) ModeData {
 }
 
 func (h *Handler) CreateMode(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeJSON[CreateModeRequest](w, r)
+	req, ok := httpx.DecodeJSON[CreateModeRequest](w, r)
 	if !ok {
 		return
 	}
@@ -197,7 +80,7 @@ func (h *Handler) CreateMode(w http.ResponseWriter, r *http.Request) {
 	req.Name = strings.TrimSpace(req.Name)
 	req.Prompt = strings.TrimSpace(req.Prompt)
 
-	if !validateRequest(req, w) {
+	if !httpx.ValidateRequest(req, w) {
 		return
 	}
 
@@ -212,14 +95,14 @@ func (h *Handler) CreateMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, ModeResponse{
+	httpx.WriteJSON(w, http.StatusCreated, ModeResponse{
 		Message: "mode created",
 		Data:    toModeData(mode),
 	})
 }
 
 func (h *Handler) ListModes(w http.ResponseWriter, r *http.Request) {
-	page, limit, ok := parsePagination(w, r)
+	page, limit, ok := httpx.ParsePagination(w, r)
 	if !ok {
 		return
 	}
@@ -245,7 +128,7 @@ func (h *Handler) ListModes(w http.ResponseWriter, r *http.Request) {
 		activeModeID = result.ActiveModeID.String()
 	}
 
-	writeJSON(w, http.StatusOK, ModeListResponse{
+	httpx.WriteJSON(w, http.StatusOK, ModeListResponse{
 		Message: "modes retrieved",
 		Data: ModeListData{
 			Modes:        items,
@@ -275,14 +158,14 @@ func (h *Handler) GetMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ModeResponse{
+	httpx.WriteJSON(w, http.StatusOK, ModeResponse{
 		Message: "mode retrieved",
 		Data:    toModeData(mode),
 	})
 }
 
 func (h *Handler) UpdateMode(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeJSON[UpdateModeRequest](w, r)
+	req, ok := httpx.DecodeJSON[UpdateModeRequest](w, r)
 	if !ok {
 		return
 	}
@@ -290,7 +173,7 @@ func (h *Handler) UpdateMode(w http.ResponseWriter, r *http.Request) {
 	req.Name = strings.TrimSpace(req.Name)
 	req.Prompt = strings.TrimSpace(req.Prompt)
 
-	if !validateRequest(req, w) {
+	if !httpx.ValidateRequest(req, w) {
 		return
 	}
 
@@ -310,7 +193,7 @@ func (h *Handler) UpdateMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ModeResponse{
+	httpx.WriteJSON(w, http.StatusOK, ModeResponse{
 		Message: "mode updated",
 		Data:    toModeData(mode),
 	})
@@ -332,7 +215,7 @@ func (h *Handler) DeleteMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ModeActionResponse{
+	httpx.WriteJSON(w, http.StatusOK, ModeActionResponse{
 		Message: "mode deleted",
 		Data: ModeActionData{
 			ModeID: modeID,
@@ -353,21 +236,21 @@ func (h *Handler) GetActiveMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ModeResponse{
+	httpx.WriteJSON(w, http.StatusOK, ModeResponse{
 		Message: "active mode retrieved",
 		Data:    toModeData(mode),
 	})
 }
 
 func (h *Handler) SetActiveMode(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeJSON[SetActiveModeRequest](w, r)
+	req, ok := httpx.DecodeJSON[SetActiveModeRequest](w, r)
 	if !ok {
 		return
 	}
 
 	req.ModeID = strings.TrimSpace(req.ModeID)
 
-	if !validateRequest(req, w) {
+	if !httpx.ValidateRequest(req, w) {
 		return
 	}
 
@@ -382,7 +265,7 @@ func (h *Handler) SetActiveMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ModeActionResponse{
+	httpx.WriteJSON(w, http.StatusOK, ModeActionResponse{
 		Message: "active mode updated",
 		Data: ModeActionData{
 			ModeID: modeID.String(),
@@ -402,7 +285,7 @@ func (h *Handler) ClearActiveMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ModeActionResponse{
+	httpx.WriteJSON(w, http.StatusOK, ModeActionResponse{
 		Message: "active mode cleared",
 		Data: ModeActionData{
 			UserID: userID,

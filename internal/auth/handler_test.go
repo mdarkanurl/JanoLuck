@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/mdarkanurl/JanoLuck/internal/httpx"
 )
 
 // Handlers under test never reach the service layer when validation fails
@@ -204,7 +206,7 @@ func TestVerifyEmail_UppercaseEmailNormalized(t *testing.T) {
 		t.Fatalf("normalizeEmail(%q) = %q, want %q", raw, normalized, "user@example.com")
 	}
 	req := VerifyEmailRequest{Email: normalized, Code: 123456}
-	if err := validate.Struct(req); err != nil {
+	if err := httpx.Validator.Struct(req); err != nil {
 		t.Errorf("normalized request should validate, got %v", err)
 	}
 }
@@ -223,7 +225,7 @@ func TestWriteError_Shapes(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			writeError(rr, http.StatusBadRequest, tt.msg)
+			httpx.WriteError(rr, http.StatusBadRequest, tt.msg)
 			if got := decodeHandlerError(t, rr).Error; got != tt.want {
 				t.Errorf("error = %q, want %q", got, tt.want)
 			}

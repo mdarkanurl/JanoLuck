@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/mdarkanurl/JanoLuck/internal/httpx"
 )
 
 func TestParsePaginationDefaults(t *testing.T) {
 	r := httptest.NewRequest("GET", "/sessions", nil)
 
-	page, limit, ok := parsePagination(httptest.NewRecorder(), r)
+	page, limit, ok := httpx.ParsePagination(httptest.NewRecorder(), r)
 	if !ok {
 		t.Fatal("expected defaults to parse")
 	}
@@ -22,7 +24,7 @@ func TestParsePaginationDefaults(t *testing.T) {
 func TestParsePaginationValues(t *testing.T) {
 	r := httptest.NewRequest("GET", "/sessions?page=3&limit=5", nil)
 
-	page, limit, ok := parsePagination(httptest.NewRecorder(), r)
+	page, limit, ok := httpx.ParsePagination(httptest.NewRecorder(), r)
 	if !ok {
 		t.Fatal("expected values to parse")
 	}
@@ -36,7 +38,7 @@ func TestParsePaginationRejectsNonIntegers(t *testing.T) {
 		r := httptest.NewRequest("GET", raw, nil)
 		rec := httptest.NewRecorder()
 
-		if _, _, ok := parsePagination(rec, r); ok {
+		if _, _, ok := httpx.ParsePagination(rec, r); ok {
 			t.Errorf("%s: expected parse to fail", raw)
 		}
 		if rec.Code != 400 {
@@ -46,7 +48,7 @@ func TestParsePaginationRejectsNonIntegers(t *testing.T) {
 }
 
 func TestListSessionsValidatesRange(t *testing.T) {
-	svc := NewService(nil, nil) // range rules fail before any repo call
+	svc := NewService(nil, nil)
 	userID := "a4e20000-0000-4000-8000-000000000000"
 	ctx := context.Background()
 

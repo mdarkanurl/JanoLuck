@@ -114,6 +114,7 @@ func NewRouter(
 	r.Route("/api/v1", func(r chi.Router) {
 
 		r.Group(func(r chi.Router) {
+			r.Use(auth.NoStore)
 			r.Use(ratelimit.Middleware(ratelimit.MiddlewareConfig{
 				Limiter: cfg.limiter,
 				Limit:   cfg.authRateLimit,
@@ -132,9 +133,9 @@ func NewRouter(
 
 		r.Group(func(r chi.Router) {
 			r.Use(auth.AuthMiddleware(tokenService))
-			r.Get("/auth/me", authHandler.Me)
-			r.Post("/auth/change-password", authHandler.ChangePassword)
-			r.Post("/auth/logout", authHandler.Logout)
+			r.With(auth.NoStore).Get("/auth/me", authHandler.Me)
+			r.With(auth.NoStore).Post("/auth/change-password", authHandler.ChangePassword)
+			r.With(auth.NoStore).Post("/auth/logout", authHandler.Logout)
 
 			r.Post("/profiles", usersHandler.CreateProfile)
 			r.Get("/profiles/exists", usersHandler.ProfileExists)

@@ -16,6 +16,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/mdarkanurl/JanoLuck/internal/auth"
 	"github.com/mdarkanurl/JanoLuck/internal/database"
+	"github.com/mdarkanurl/JanoLuck/internal/httpx"
 	"github.com/mdarkanurl/JanoLuck/internal/testutil"
 )
 
@@ -57,7 +58,7 @@ func decodeSessionResponse(t *testing.T, rr *httptest.ResponseRecorder, v any) {
 
 func TestSessionWriteJSONAndError(t *testing.T) {
 	rr := httptest.NewRecorder()
-	writeJSON(rr, http.StatusCreated, map[string]string{"ok": "yes"})
+	httpx.WriteJSON(rr, http.StatusCreated, map[string]string{"ok": "yes"})
 
 	if rr.Code != http.StatusCreated {
 		t.Errorf("status = %d, want 201", rr.Code)
@@ -84,7 +85,7 @@ func TestSessionWriteJSONAndError(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			writeError(rr, http.StatusBadRequest, tt.msg)
+			httpx.WriteError(rr, http.StatusBadRequest, tt.msg)
 			if got := decodeSessionError(t, rr).Error; got != tt.want {
 				t.Errorf("error = %q, want %q", got, tt.want)
 			}
@@ -152,13 +153,13 @@ func TestSessionValidationMessage(t *testing.T) {
 			value: struct {
 				Email string `validate:"email"`
 			}{Email: "bad"},
-			want: "failed on 'email' validation",
+			want: "must be a valid email address",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validate.Struct(tt.value)
+			err := httpx.Validator.Struct(tt.value)
 			if err == nil {
 				t.Fatal("expected validation error")
 			}
@@ -166,8 +167,8 @@ func TestSessionValidationMessage(t *testing.T) {
 			if !ok || len(fields) != 1 {
 				t.Fatalf("unexpected errors: %v", err)
 			}
-			if got := validationMessage(fields[0]); got != tt.want {
-				t.Errorf("validationMessage() = %q, want %q", got, tt.want)
+			if got := httpx.ValidationMessage(fields[0]); got != tt.want {
+				t.Errorf("httpx.ValidationMessage() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -176,14 +177,14 @@ func TestSessionValidationMessage(t *testing.T) {
 func TestSessionDecodeJSON(t *testing.T) {
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"content":"hi"}`))
-	got, ok := decodeJSON[CreateSessionRequest](rr, req)
+	got, ok := httpx.DecodeJSON[CreateSessionRequest](rr, req)
 	if !ok || got.Content != "hi" {
 		t.Errorf("decodeJSON() = (%+v, %v), want content hi", got, ok)
 	}
 
 	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"content":`))
-	if _, ok := decodeJSON[CreateSessionRequest](rr, req); ok {
+	if _, ok := httpx.DecodeJSON[CreateSessionRequest](rr, req); ok {
 		t.Error("expected malformed body to fail")
 	}
 	if rr.Code != http.StatusBadRequest {
@@ -193,7 +194,7 @@ func TestSessionDecodeJSON(t *testing.T) {
 
 func TestParsePaginationTrimsWhitespace(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/sessions?page=%203%20&limit=%205%20", nil)
-	page, limit, ok := parsePagination(httptest.NewRecorder(), r)
+	page, limit, ok := httpx.ParsePagination(httptest.NewRecorder(), r)
 	if !ok || page != 3 || limit != 5 {
 		t.Errorf("got (%d, %d, %v), want (3, 5, true)", page, limit, ok)
 	}

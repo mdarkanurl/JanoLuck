@@ -1,5 +1,7 @@
 package modes
 
+import "github.com/mdarkanurl/JanoLuck/internal/httpx"
+
 type CreateModeRequest struct {
 	Name   string `json:"name"   validate:"required,min=1,max=100"`
 	Prompt string `json:"prompt" validate:"required,min=1,max=8000"`
@@ -53,12 +55,7 @@ type ModeActionResponse struct {
 	Data    ModeActionData `json:"data"`
 }
 
-type ValidationError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
-}
-
-type ErrorResponse struct {
-	Error  string            `json:"error"`
-	Fields []ValidationError `json:"fields,omitempty"`
-}
+type (
+	ValidationError = httpx.ValidationError
+	ErrorResponse   = httpx.ErrorResponse
+)

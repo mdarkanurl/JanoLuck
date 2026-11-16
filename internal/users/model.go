@@ -1,5 +1,7 @@
 package users
 
+import "github.com/mdarkanurl/JanoLuck/internal/httpx"
+
 var FixedQuestions = []string{
 	"Where are you from?",
 	"What do you do for living?",
@@ -69,12 +71,7 @@ type ProfileExistsResponse struct {
 	Data    ProfileExistsData `json:"data"`
 }
 
-type ValidationError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
-}
-
-type ErrorResponse struct {
-	Error  string            `json:"error"`
-	Fields []ValidationError `json:"fields,omitempty"`
-}
+type (
+	ValidationError = httpx.ValidationError
+	ErrorResponse   = httpx.ErrorResponse
+)

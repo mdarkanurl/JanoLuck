@@ -3,6 +3,8 @@ package auth
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/mdarkanurl/JanoLuck/internal/httpx"
 )
 
 func TestVerificationCode_UnmarshalJSON(t *testing.T) {
@@ -23,8 +25,6 @@ func TestVerificationCode_UnmarshalJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var req VerifyEmailRequest
-			// Only Email is required for struct completeness in this unit;
-			// we check the Code field unmarshalling behaviour.
 			err := json.Unmarshal([]byte(tt.input), &req)
 			if tt.wantErr {
 				if err == nil {
@@ -59,7 +59,7 @@ func TestSignUpRequest_Validation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validate.Struct(tt.req)
+			err := httpx.Validator.Struct(tt.req)
 			if tt.wantErr && err == nil {
 				t.Error("expected validation error, got nil")
 			}
@@ -72,41 +72,41 @@ func TestSignUpRequest_Validation(t *testing.T) {
 
 func TestVerifyEmailRequest_CodeRange(t *testing.T) {
 	valid := VerifyEmailRequest{Email: "a@b.com", Code: 123456}
-	if err := validate.Struct(valid); err != nil {
+	if err := httpx.Validator.Struct(valid); err != nil {
 		t.Errorf("valid request rejected: %v", err)
 	}
 
 	tooSmall := VerifyEmailRequest{Email: "a@b.com", Code: 999}
-	if err := validate.Struct(tooSmall); err == nil {
+	if err := httpx.Validator.Struct(tooSmall); err == nil {
 		t.Error("code < 100000 should fail min validation")
 	}
 
 	tooLarge := VerifyEmailRequest{Email: "a@b.com", Code: 1000000}
-	if err := validate.Struct(tooLarge); err == nil {
+	if err := httpx.Validator.Struct(tooLarge); err == nil {
 		t.Error("code > 999999 should fail max validation")
 	}
 }
 
 func TestResetPasswordRequest_Validation(t *testing.T) {
 	valid := ResetPasswordRequest{Email: "a@b.com", Code: 123456, NewPassword: "newpass1"}
-	if err := validate.Struct(valid); err != nil {
+	if err := httpx.Validator.Struct(valid); err != nil {
 		t.Errorf("valid request rejected: %v", err)
 	}
 
 	weak := ResetPasswordRequest{Email: "a@b.com", Code: 123456, NewPassword: "weakpass"}
-	if err := validate.Struct(weak); err == nil {
+	if err := httpx.Validator.Struct(weak); err == nil {
 		t.Error("password without number should fail strong_password validation")
 	}
 }
 
 func TestChangePasswordRequest_Validation(t *testing.T) {
 	valid := ChangePasswordRequest{CurrentPassword: "oldpass1", NewPassword: "newpass1"}
-	if err := validate.Struct(valid); err != nil {
+	if err := httpx.Validator.Struct(valid); err != nil {
 		t.Errorf("valid request rejected: %v", err)
 	}
 
 	weak := ChangePasswordRequest{CurrentPassword: "oldpass1", NewPassword: "nonumbers"}
-	if err := validate.Struct(weak); err == nil {
+	if err := httpx.Validator.Struct(weak); err == nil {
 		t.Error("weak new password should fail validation")
 	}
 }

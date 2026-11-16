@@ -2,10 +2,11 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/mdarkanurl/JanoLuck/internal/httpx"
 )
 
 const (
@@ -62,7 +63,13 @@ func UserIDFromContext(ctx context.Context) (string, string, bool) {
 }
 
 func writeAuthError(w http.ResponseWriter, msg string, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(ErrorResponse{Error: msg})
+	httpx.WriteError(w, status, msg)
+}
+
+func NoStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Pragma", "no-cache")
+		next.ServeHTTP(w, r)
+	})
 }
