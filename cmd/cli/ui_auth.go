@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"unicode"
 
@@ -32,11 +31,13 @@ type authModel struct {
 
 	mode  authMode
 	focus int
+	hover int
 
-	email    textinput.Model
-	password textinput.Model
-	confirm  textinput.Model
-	code     textinput.Model
+	footerHover string
+	email       textinput.Model
+	password    textinput.Model
+	confirm     textinput.Model
+	code        textinput.Model
 
 	spinner spinner.Model
 	loading bool
@@ -298,60 +299,76 @@ func (m *authModel) cycleFocus(delta int) tea.Cmd {
 	return m.focusField(m.focus + delta)
 }
 
-// handleMouse focuses the field under the pointer, so the form can be navigated
-// with the mouse as well as with tab/shift+tab.
 func (m authModel) handleMouse(msg tea.MouseMsg) (authModel, tea.Cmd) {
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+	_, targets, ox, _ := m.layout()
+	target, ok := targets.at(msg.X, msg.Y)
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		m.hover = -1
+		m.footerHover = ""
+		if ok {
+			if target.action == "field" {
+				m.hover = target.index
+			} else {
+				m.footerHover = target.action
+			}
+			setPointerShape(target.pointerShape())
+		} else {
+			resetPointerShape()
+		}
+		return m, nil
+	case tea.MouseActionRelease:
+		m.hover = -1
+		m.footerHover = ""
 		return m, nil
 	}
 
-	box, cell, ok := m.fieldAt(msg.X, msg.Y)
-	if !ok {
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft || !ok {
 		return m, nil
 	}
 
-	cmd := m.focusField(box.index)
-	m.setCursorAt(box.index, cell)
-	return m, cmd
+	if target.action == "field" {
+		cmd := m.focusField(target.index)
+		m.setCursorAt(target.index, msg.X-ox)
+		return m, cmd
+	}
+
+	return m.runAction(target.action)
 }
 
-// fieldAt maps a screen cell to the field rendered under it, returning the box
-// and the click's column within it. It mirrors how View centres the card.
-func (m authModel) fieldAt(x, y int) (authFieldBox, int, bool) {
-	block, boxes := m.layout()
-	if len(boxes) == 0 {
-		return authFieldBox{}, 0, false
-	}
-
-	lines := strings.Split(block, "\n")
-
-	// lipgloss.Place centres the block by padding the smaller side, and pads
-	// each line by its own width, so the remainder goes to the left.
-	top := 0
-	if gap := m.height - len(lines); gap > 0 {
-		top = gap - int(math.Round(float64(gap)*0.5))
-	}
-
-	for _, box := range boxes {
-		relY := y - top
-		if relY < box.labelLine || relY > box.bottom || relY >= len(lines) {
-			continue
+func (m authModel) runAction(action string) (authModel, tea.Cmd) {
+	switch action {
+	case "submit":
+		return m.submit()
+	case "signup":
+		if m.mode == authLogin {
+			m.mode = authSignup
+			m.err = ""
+			m.notice = ""
+			return m, m.focusField(0)
 		}
-
-		lineWidth := lipgloss.Width(lines[relY])
-		left := 0
-		if gap := m.width - lineWidth; gap > 0 {
-			left = gap - int(math.Round(float64(gap)*0.5))
+	case "forgot":
+		if m.mode == authLogin {
+			m.mode = authForgot
+			m.err = ""
+			m.notice = ""
+			return m, m.focusField(0)
 		}
-
-		if relX := x - left; relX >= 0 && relX < box.width {
-			return box, relX, true
+	case "back":
+		if m.mode != authLogin {
+			m.mode = authLogin
+			m.err = ""
+			m.notice = ""
+			return m, m.focusField(0)
 		}
+	case "next":
+		return m, m.cycleFocus(1)
+	case "quit":
+		return m, tea.Quit
 	}
-	return authFieldBox{}, 0, false
+	return m, nil
 }
 
-// setCursorAt puts the text caret at the column that was clicked.
 func (m *authModel) setCursorAt(index int, boxCell int) {
 	fields := m.fields()
 	if index < 0 || index >= len(fields) {
@@ -359,10 +376,9 @@ func (m *authModel) setCursorAt(index int, boxCell int) {
 	}
 	field := fields[index]
 
-	// Column where the text starts: border + padding + prompt.
 	textCell := boxCell - (1 + 1 + lipgloss.Width(field.Prompt))
 	if textCell < 0 {
-		return // clicked the border or prompt: focus only
+		return
 	}
 
 	pos := 0
@@ -480,149 +496,142 @@ func (m authModel) submit() (authModel, tea.Cmd) {
 	return m, nil
 }
 
-// authFieldBox is where a field's label and bordered input sit inside the
-// rendered auth card. Coordinates are relative to the card block.
-type authFieldBox struct {
-	index     int
-	labelLine int // line index of the field's label
-	top       int // line index of the border's top edge
-	bottom    int // line index of the border's bottom edge (inclusive)
-	width     int // rendered width of the bordered box
-}
-
-// layout renders the auth card and reports where each field sits in it, so a
-// mouse click can be mapped back to the field under the pointer.
-func (m authModel) layout() (string, []authFieldBox) {
+func (m authModel) layout() (string, clickMap, int, int) {
 	cardWidth := min(64, max(40, m.width-4))
 	inner := cardWidth - 2
 
-	var body strings.Builder
-	lines := 0 // finished lines == index of the line currently being written
-	write := func(s string) {
-		body.WriteString(s)
-		lines += strings.Count(s, "\n")
-	}
+	b := &layoutBuilder{}
 
-	boxes := make([]authFieldBox, 0, 3)
 	field := func(index int, label string, input textinput.Model, focused bool) {
-		labelLine := lines
-		rendered := m.renderField(label, input, focused, inner)
-		write(rendered)
+		start := b.line
+		rendered := m.renderField(label, input, focused, inner, index == m.hover)
+		b.write(rendered)
 
 		boxLines := strings.Split(rendered, "\n")
-		boxes = append(boxes, authFieldBox{
-			index:     index,
-			labelLine: labelLine,
-			top:       labelLine + 1,
-			bottom:    labelLine + len(boxLines) - 1,
-			width:     lipgloss.Width(boxLines[len(boxLines)-1]),
+		b.add(clickTarget{
+			action: "field",
+			index:  index,
+			x:      0,
+			y:      start,
+			width:  lipgloss.Width(boxLines[len(boxLines)-1]),
+			height: len(boxLines),
 		})
 	}
 
-	write(logoStyle.Render("JanoLuck") + "\n")
-	write(mutedStyle.Render("your optimistic friend for what-ifs") + "\n\n")
+	b.write(logoStyle.Render("JanoLuck") + "\n")
+	b.write(mutedStyle.Render("your optimistic friend for what-ifs") + "\n\n")
 
 	switch m.mode {
 	case authLogin:
-		write(titleStyle.Render("Welcome back") + "\n")
-		write(mutedStyle.Render("Sign in to pick up where you left off.") + "\n\n")
+		b.write(titleStyle.Render("Welcome back") + "\n")
+		b.write(mutedStyle.Render("Sign in to pick up where you left off.") + "\n\n")
 		field(0, "Email", m.email, m.focus == 0)
-		write("\n")
+		b.write("\n")
 		field(1, "Password", m.password, m.focus == 1)
 
 	case authSignup:
-		write(titleStyle.Render("Create your account") + "\n")
-		write(mutedStyle.Render("We'll email you a 6-digit verification code.") + "\n\n")
+		b.write(titleStyle.Render("Create your account") + "\n")
+		b.write(mutedStyle.Render("We'll email you a 6-digit verification code.") + "\n\n")
 		field(0, "Email", m.email, m.focus == 0)
-		write("\n")
+		b.write("\n")
 		field(1, "Password", m.password, m.focus == 1)
-		write("\n")
+		b.write("\n")
 		field(2, "Confirm password", m.confirm, m.focus == 2)
 
 	case authVerify:
-		write(titleStyle.Render("Check your email") + "\n")
-		write(mutedStyle.Render("Enter the code sent to "+truncate(m.signupEmail, inner-4)) + "\n\n")
+		b.write(titleStyle.Render("Check your email") + "\n")
+		b.write(mutedStyle.Render("Enter the code sent to "+truncate(m.signupEmail, inner-4)) + "\n\n")
 		field(0, "Verification code", m.code, true)
 
 	case authForgot:
-		write(titleStyle.Render("Reset your password") + "\n")
-		write(mutedStyle.Render("Enter your email and we'll send you a reset code.") + "\n\n")
+		b.write(titleStyle.Render("Reset your password") + "\n")
+		b.write(mutedStyle.Render("Enter your email and we'll send you a reset code.") + "\n\n")
 		field(0, "Email", m.email, m.focus == 0)
 
 	case authReset:
-		write(titleStyle.Render("Choose a new password") + "\n")
-		write(mutedStyle.Render("Enter the code sent to "+truncate(m.email.Value(), inner-4)) + "\n\n")
+		b.write(titleStyle.Render("Choose a new password") + "\n")
+		b.write(mutedStyle.Render("Enter the code sent to "+truncate(m.email.Value(), inner-4)) + "\n\n")
 		field(0, "Email", m.email, m.focus == 0)
-		write("\n")
+		b.write("\n")
 		field(1, "Reset code", m.code, m.focus == 1)
-		write("\n")
+		b.write("\n")
 		field(2, "New password", m.password, m.focus == 2)
-		write("\n")
+		b.write("\n")
 		field(3, "Confirm new password", m.confirm, m.focus == 3)
 	}
 
-	write("\n\n")
+	b.write("\n\n")
 
 	if m.notice != "" {
-		write(successStyle.Render(wrapText(m.notice, inner)) + "\n")
+		b.write(successStyle.Render(wrapText(m.notice, inner)) + "\n")
 	}
 	if m.err != "" {
-		write(dangerStyle.Render(wrapText(m.err, inner)) + "\n")
+		b.write(dangerStyle.Render(wrapText(m.err, inner)) + "\n")
 	}
 	if m.loading {
-		write(m.spinner.View() + " " + mutedStyle.Render("One moment...") + "\n")
+		b.write(m.spinner.View() + " " + mutedStyle.Render("One moment...") + "\n")
 	}
 
-	write("\n")
-	write(m.footer() + "\n\n")
-	write(mutedStyle.Render("server: " + truncate(m.apiURL, inner-10)))
+	b.write("\n")
+	b.addActions(m.footerActions(), m.footerHover, inner, 0)
+	b.write("\n")
+	b.write(mutedStyle.Render("server: " + truncate(m.apiURL, inner-10)))
 
-	block := lipgloss.NewStyle().
-		Width(cardWidth).
-		Render(body.String())
+	block := padLines(b.String(), cardWidth)
+	screen, ox, oy := centeredBlock(m.width, m.height, block)
 
-	return block, boxes
+	return screen, b.targets.shift(ox, oy), ox, oy
 }
 
 func (m authModel) View() string {
-	block, _ := m.layout()
-
-	return centeredCard(m.width, m.height, block)
+	screen, _, _, _ := m.layout()
+	return screen
 }
 
-func (m authModel) renderField(label string, input textinput.Model, focused bool, width int) string {
+func (m authModel) renderField(label string, input textinput.Model, focused bool, width int, hovered bool) string {
 	labelStyle := mutedStyle
 	if focused {
 		labelStyle = accentStyle
 	}
+	if hovered && !focused {
+		return hoverField(label, input.View(), width)
+	}
 	return labelStyle.Render(label) + "\n" + fieldBorder(focused, width).Render(input.View())
 }
 
-func (m authModel) footer() string {
-	key := func(k string) string { return accentStyle.Render(k) }
-
+func (m authModel) footerActions() []actionItem {
 	switch m.mode {
 	case authLogin:
-		return key("[enter]") + mutedStyle.Render(" log in    ") +
-			key("[ctrl+n]") + mutedStyle.Render(" sign up    ") +
-			key("[ctrl+c]") + mutedStyle.Render(" quit\n") +
-			key("[ctrl+r]") + mutedStyle.Render(" forgot password")
+		return []actionItem{
+			{key: "enter", label: "log in", action: "submit"},
+			{key: "ctrl+n", label: "sign up", action: "signup"},
+			{key: "ctrl+r", label: "forgot password", action: "forgot"},
+			{key: "ctrl+c", label: "quit", action: "quit"},
+		}
 	case authSignup:
-		return key("[enter]") + mutedStyle.Render(" sign up    ") +
-			key("[tab]") + mutedStyle.Render(" next    ") +
-			key("[esc]") + mutedStyle.Render(" back")
+		return []actionItem{
+			{key: "enter", label: "sign up", action: "submit"},
+			{key: "tab", label: "next", action: "next"},
+			{key: "esc", label: "back", action: "back"},
+		}
 	case authVerify:
-		return key("[enter]") + mutedStyle.Render(" verify    ") +
-			key("[esc]") + mutedStyle.Render(" back")
+		return []actionItem{
+			{key: "enter", label: "verify", action: "submit"},
+			{key: "esc", label: "back", action: "back"},
+		}
 	case authForgot:
-		return key("[enter]") + mutedStyle.Render(" send code    ") +
-			key("[esc]") + mutedStyle.Render(" back")
+		return []actionItem{
+			{key: "enter", label: "send code", action: "submit"},
+			{key: "esc", label: "back", action: "back"},
+		}
 	case authReset:
-		return key("[enter]") + mutedStyle.Render(" reset    ") +
-			key("[tab]") + mutedStyle.Render(" next    ") +
-			key("[esc]") + mutedStyle.Render(" back")
+		return []actionItem{
+			{key: "enter", label: "reset", action: "submit"},
+			{key: "tab", label: "next", action: "next"},
+			{key: "esc", label: "back", action: "back"},
+		}
 	}
-	return ""
+	return nil
 }
 
 func loginCmd(c *client, email, password string) tea.Cmd {

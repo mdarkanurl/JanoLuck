@@ -75,6 +75,16 @@ type chatModel struct {
 	confirm *chatConfirm
 	picker  *sessionPicker
 	modes   *modePicker
+
+	pickerHover  int
+	modesHover   int
+	confirmHover string
+
+	suggestHover  int
+	composerHover bool
+
+	pickerFooterHover string
+	modesFooterHover  string
 }
 
 type sessionsLoadedMsg struct {
@@ -152,6 +162,9 @@ func newChatModel(
 	}
 	model.viewport.MouseWheelEnabled = true
 	model.input.Focus()
+	model.pickerHover = -1
+	model.modesHover = -1
+	model.suggestHover = -1
 
 	model.setSize(width, height)
 
@@ -235,12 +248,19 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		return m, cmd
 
 	case tea.MouseMsg:
-		if m.picker != nil || m.modes != nil || m.confirm != nil || m.current == nil {
-			return m, nil
+		if m.confirm != nil {
+			return m.handleConfirmMouse(msg)
 		}
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		return m, cmd
+		if m.modes != nil {
+			if m.modes.form != nil {
+				return m.handleModeFormMouse(msg)
+			}
+			return m.handleModesMouse(msg)
+		}
+		if m.picker != nil {
+			return m.handlePickerMouse(msg)
+		}
+		return m.handleChatMouse(msg)
 
 	case tea.KeyMsg:
 		switch {
@@ -397,8 +417,6 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 			m.resizeViewport()
 			return m, nil
 		case "enter":
-			// Run the highlighted command instead of submitting the partial
-			// text, so selecting a suggestion and pressing enter works.
 			m.input.SetValue(options[index].name)
 			m.input.CursorEnd()
 			m.suggestIndex = 0
@@ -957,6 +975,11 @@ func (m chatModel) View() string {
 }
 
 func (m chatModel) homeView() string {
+	screen, _ := m.homeLayout()
+	return screen
+}
+
+func (m chatModel) homeLayout() (string, clickMap) {
 	width := m.contentWidth()
 
 	line := func(value string) string {
@@ -966,45 +989,183 @@ func (m chatModel) homeView() string {
 			Render(value)
 	}
 
-	parts := []string{
-		line(logoStyle.Render("JanoLuck")),
-		line(mutedStyle.Render("your optimistic friend for what-ifs")),
-		"",
+	var parts []string
+	var targets clickMap
+	y := 0
+	add := func(s string) {
+		parts = append(parts, s)
+		y += strings.Count(s, "\n") + 1
 	}
-	if suggestions := m.suggestionsView(); suggestions != "" {
-		parts = append(parts, suggestions)
-	}
-	parts = append(parts,
-		m.composerView(),
-		"",
-		line(m.hintView()),
-	)
 
-	return lipgloss.Place(
-		m.width,
-		m.height,
-		lipgloss.Center,
-		lipgloss.Center,
-		strings.Join(parts, "\n"),
-	)
+	add(line(logoStyle.Render("JanoLuck")))
+	add(line(mutedStyle.Render("your optimistic friend for what-ifs")))
+	add("")
+
+	if suggestions := m.suggestionsView(); suggestions != "" {
+		for i := range m.commandSuggestions() {
+			targets = append(targets, clickTarget{
+				action: "suggestion",
+				index:  i,
+				x:      0,
+				y:      y + i,
+				width:  width,
+				height: 1,
+			})
+		}
+		add(suggestions)
+	}
+
+	composer := m.composerView()
+	targets = append(targets, clickTarget{
+		action: "composer",
+		x:      0,
+		y:      y,
+		width:  width,
+		height: strings.Count(composer, "\n") + 1,
+	})
+	add(composer)
+	add("")
+	add(line(m.hintView()))
+
+	block := strings.Join(parts, "\n")
+	screen, ox, oy := centeredBlock(m.width, m.height, block)
+	return screen, targets.shift(ox, oy)
 }
 
 func (m chatModel) conversationView() string {
+	screen, _ := m.conversationLayout()
+	return screen
+}
+
+func (m chatModel) conversationLayout() (string, clickMap) {
 	m.resizeViewport()
 
-	parts := []string{
-		m.headerView(),
-		m.viewport.View(),
+	var parts []string
+	var targets clickMap
+	y := 0
+	add := func(s string) {
+		parts = append(parts, s)
+		y += strings.Count(s, "\n") + 1
 	}
-	if suggestions := m.suggestionsView(); suggestions != "" {
-		parts = append(parts, suggestions)
-	}
-	parts = append(parts,
-		m.composerView(),
-		m.hintView(),
-	)
 
-	return lipgloss.PlaceHorizontal(m.width, lipgloss.Center, strings.Join(parts, "\n"))
+	add(m.headerView())
+	add(m.viewport.View())
+
+	if suggestions := m.suggestionsView(); suggestions != "" {
+		width := m.contentWidth()
+		for i := range m.commandSuggestions() {
+			targets = append(targets, clickTarget{
+				action: "suggestion",
+				index:  i,
+				x:      0,
+				y:      y + i,
+				width:  width,
+				height: 1,
+			})
+		}
+		add(suggestions)
+	}
+
+	composer := m.composerView()
+	targets = append(targets, clickTarget{
+		action: "composer",
+		x:      0,
+		y:      y,
+		width:  m.contentWidth(),
+		height: strings.Count(composer, "\n") + 1,
+	})
+	add(composer)
+	add(m.hintView())
+
+	block := strings.Join(parts, "\n")
+	screen, ox, oy := centeredBlock(m.width, 0, block)
+	return screen, targets.shift(ox, oy)
+}
+
+func (m chatModel) handleChatMouse(msg tea.MouseMsg) (chatModel, tea.Cmd) {
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		if m.current != nil {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
+		if options := m.commandSuggestions(); len(options) > 0 {
+			m.suggestIndex = (m.suggestIndex - 1 + len(options)) % len(options)
+		}
+		return m, nil
+	case tea.MouseButtonWheelDown:
+		if m.current != nil {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
+		if options := m.commandSuggestions(); len(options) > 0 {
+			m.suggestIndex = (m.suggestIndex + 1) % len(options)
+		}
+		return m, nil
+	}
+
+	home := m.current == nil && len(m.chats) == 0
+	var targets clickMap
+	if home {
+		_, targets = m.homeLayout()
+	} else {
+		_, targets = m.conversationLayout()
+	}
+	target, ok := targets.at(msg.X, msg.Y)
+
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		m.suggestHover = -1
+		m.composerHover = false
+		if ok {
+			switch target.action {
+			case "suggestion":
+				m.suggestHover = target.index
+			case "composer":
+				m.composerHover = true
+			}
+			setPointerShape(target.pointerShape())
+		} else {
+			resetPointerShape()
+		}
+		return m, nil
+	case tea.MouseActionRelease:
+		m.suggestHover = -1
+		m.composerHover = false
+		return m, nil
+	}
+
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft || !ok {
+		return m, nil
+	}
+
+	switch target.action {
+	case "suggestion":
+		return m.activateSuggestion(target.index)
+	case "composer":
+		m.input.Focus()
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m chatModel) activateSuggestion(index int) (chatModel, tea.Cmd) {
+	options := m.commandSuggestions()
+	if index < 0 || index >= len(options) {
+		return m, nil
+	}
+
+	m.input.SetValue(options[index].name)
+	m.input.CursorEnd()
+	m.suggestIndex = 0
+	m.suggestHover = -1
+	m.syncInputHeight()
+	m.resizeViewport()
+
+	return m.runCommand(options[index].name)
 }
 
 func (m chatModel) suggestionsView() string {
@@ -1016,18 +1177,18 @@ func (m chatModel) suggestionsView() string {
 	width := m.contentWidth()
 	index := min(max(m.suggestIndex, 0), len(options)-1)
 
-	// The parent view centres each line independently, so every row must be
-	// padded to the same width. Otherwise shorter rows drift towards the
-	// middle and the command list looks ragged.
 	rowStyle := lipgloss.NewStyle().Width(width).Align(lipgloss.Left)
 
 	rows := make([]string, 0, len(options))
 	for i, option := range options {
 		name := fmt.Sprintf(" %-13s", option.name)
 		body := name + option.description
-		if i == index {
+		switch {
+		case i == index:
 			rows = append(rows, selectedStyle.Width(width).Align(lipgloss.Left).Render(body))
-		} else {
+		case i == m.suggestHover:
+			rows = append(rows, hoverStyle.Width(width).Align(lipgloss.Left).Render(body))
+		default:
 			rows = append(rows, rowStyle.Render(
 				accentStyle.Render(name)+mutedStyle.Render(option.description),
 			))
@@ -1074,9 +1235,14 @@ func (m chatModel) hintView() string {
 }
 
 func (m chatModel) composerView() string {
+	borderColor := colorHairline
+	if m.composerHover {
+		borderColor = colorPrimary
+	}
+
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorHairline).
+		BorderForeground(borderColor).
 		Padding(0, 1).
 		Width(max(10, m.contentWidth()-2))
 
@@ -1084,41 +1250,151 @@ func (m chatModel) composerView() string {
 }
 
 func (m chatModel) pickerView() string {
-	if m.picker == nil {
-		return ""
-	}
+	screen, _ := m.pickerLayout()
+	return screen
+}
 
+func (m chatModel) pickerLayout() (string, clickMap) {
 	inner := m.pickerInnerWidth()
+	matches := m.pickerMatches()
+
+	maxRows := max(3, min(len(matches), m.height-10))
+	start := 0
+	if m.picker.index >= maxRows {
+		start = m.picker.index - maxRows + 1
+	}
+	end := min(len(matches), start+maxRows)
+
+	b := &layoutBuilder{}
 
 	title := titleStyle.Render("Conversations")
 	if len(m.sessions) > 0 {
 		title += "  " + mutedStyle.Render(fmt.Sprintf("%d", len(m.sessions)))
 	}
-
-	footer := "type to filter · ↑↓ move · enter open · ctrl+d delete · esc close"
-
-	lines := []string{title}
+	b.write(title + "\n")
 	if status := m.pickerStatus(inner); status != "" {
-		lines = append(lines, status)
+		b.write(status + "\n")
 	}
-	lines = append(lines,
-		m.picker.filter.View(),
-		hairlineStyle.Render(strings.Repeat("─", max(1, inner))),
-		m.pickerListView(inner),
-		"",
-		mutedStyle.Render(truncate(footer, inner)),
-	)
 
-	content := strings.Join(lines, "\n")
+	filterView := m.picker.filter.View()
+	filterLine := b.line
+	b.write(filterView + "\n")
+	b.add(clickTarget{
+		action: "filter",
+		x:      0,
+		y:      filterLine,
+		width:  lipgloss.Width(filterView),
+		height: 1,
+	})
+	b.write(hairlineStyle.Render(strings.Repeat("─", max(1, inner))) + "\n")
 
-	panel := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorPrimary).
-		Padding(1, 2).
-		Width(inner + 4).
-		Render(content)
+	switch {
+	case m.picker.err != "":
+		b.write(dangerStyle.Render(truncate(m.picker.err, inner)) + "\n")
+	case len(matches) == 0 && m.picker.loading:
+		b.write(m.spinner.View() + " " + mutedStyle.Render("Loading conversations...") + "\n")
+	case len(matches) == 0:
+		empty := "No conversations yet. Your first message starts one."
+		if strings.TrimSpace(m.picker.filter.Value()) != "" {
+			empty = "No conversations match your filter."
+		}
+		b.write(mutedStyle.Render(truncate(empty, inner)) + "\n")
+	default:
+		for i := start; i < end; i++ {
+			row := m.pickerRow(matches[i], i, inner, i == m.pickerHover)
+			rowLine := b.line
+			b.write(row + "\n")
+			b.add(clickTarget{
+				action: "row",
+				index:  i,
+				x:      0,
+				y:      rowLine,
+				width:  inner,
+				height: 1,
+			})
+		}
+	}
 
-	return centeredCard(m.width, m.height, panel)
+	b.write("\n")
+	b.addActions(m.pickerActions(), m.pickerFooterHover, inner, 0)
+
+	screen, ox, oy := panelLayout(m.width, m.height, strings.TrimSuffix(b.String(), "\n"), inner, 2, 1)
+	return screen, b.targets.shift(ox, oy)
+}
+
+func (m chatModel) pickerActions() []actionItem {
+	return []actionItem{
+		{key: "enter", label: "open", action: "open"},
+		{key: "ctrl+d", label: "delete", action: "delete"},
+		{key: "esc", label: "close", action: "close"},
+	}
+}
+
+func (m chatModel) handlePickerMouse(msg tea.MouseMsg) (chatModel, tea.Cmd) {
+	if m.picker == nil {
+		return m, nil
+	}
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.movePicker(-1)
+		resetPointerShape()
+		return m, nil
+	case tea.MouseButtonWheelDown:
+		m.movePicker(1)
+		resetPointerShape()
+		return m, nil
+	}
+
+	_, targets := m.pickerLayout()
+	target, ok := targets.at(msg.X, msg.Y)
+
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		m.pickerHover = -1
+		m.pickerFooterHover = ""
+		if ok {
+			switch target.action {
+			case "row":
+				m.pickerHover = target.index
+			case "filter":
+			default:
+				m.pickerFooterHover = target.action
+			}
+			setPointerShape(target.pointerShape())
+		} else {
+			resetPointerShape()
+		}
+		return m, nil
+	case tea.MouseActionRelease:
+		m.pickerHover = -1
+		m.pickerFooterHover = ""
+		return m, nil
+	}
+
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft || !ok {
+		return m, nil
+	}
+
+	switch target.action {
+	case "filter":
+		m.picker.filter.Focus()
+		return m, nil
+	case "row":
+		m.picker.index = target.index
+		return m.openPickerSelection()
+	case "open":
+		return m.openPickerSelection()
+	case "delete":
+		return m.confirmDeleteSelection()
+	case "close":
+		m.picker = nil
+		m.focusInput()
+		resetPointerShape()
+		return m, nil
+	}
+
+	return m, nil
 }
 
 func (m chatModel) pickerStatus(inner int) string {
@@ -1133,42 +1409,7 @@ func (m chatModel) pickerStatus(inner int) string {
 	return ""
 }
 
-func (m chatModel) pickerListView(inner int) string {
-	if m.picker == nil {
-		return ""
-	}
-
-	matches := m.pickerMatches()
-
-	if m.picker.err != "" {
-		return dangerStyle.Render(truncate(m.picker.err, inner))
-	}
-	if m.picker.loading && len(matches) == 0 {
-		return m.spinner.View() + " " + mutedStyle.Render("Loading conversations...")
-	}
-	if len(matches) == 0 {
-		if strings.TrimSpace(m.picker.filter.Value()) != "" {
-			return mutedStyle.Render("No conversations match your filter.")
-		}
-		return mutedStyle.Render("No conversations yet. Your first message starts one.")
-	}
-
-	maxRows := max(3, min(len(matches), m.height-10))
-	start := 0
-	if m.picker.index >= maxRows {
-		start = m.picker.index - maxRows + 1
-	}
-	end := min(len(matches), start+maxRows)
-
-	rows := make([]string, 0, end-start)
-	for i := start; i < end; i++ {
-		rows = append(rows, m.pickerRow(matches[i], i, inner))
-	}
-
-	return strings.Join(rows, "\n")
-}
-
-func (m chatModel) pickerRow(session sessionData, index, width int) string {
+func (m chatModel) pickerRow(session sessionData, index, width int, hovered bool) string {
 	marker := "  "
 	if m.current != nil && m.current.ID == session.ID {
 		marker = "● "
@@ -1189,6 +1430,8 @@ func (m chatModel) pickerRow(session sessionData, index, width int) string {
 	switch {
 	case index == m.picker.index:
 		return selectedStyle.Render(line)
+	case hovered:
+		return hoverStyle.Render(line)
 	case m.current != nil && m.current.ID == session.ID:
 		return accentStyle.Render(line)
 	default:
@@ -1197,8 +1440,20 @@ func (m chatModel) pickerRow(session sessionData, index, width int) string {
 }
 
 func (m chatModel) confirmView() string {
+	screen, _ := m.confirmLayout()
+	return screen
+}
+
+func (m chatModel) confirmActions() []actionItem {
+	return []actionItem{
+		{key: "y", label: "confirm", action: "yes"},
+		{key: "n", label: "cancel", action: "no"},
+	}
+}
+
+func (m chatModel) confirmLayout() (string, clickMap) {
 	width := min(58, max(38, m.width-4))
-	inner := width - 8
+	inner := width - 4
 
 	title := "Delete conversation?"
 	body := "This removes the conversation and all of its messages."
@@ -1222,12 +1477,46 @@ func (m chatModel) confirmView() string {
 		}
 	}
 
-	content := titleStyle.Render(title) + "\n\n" +
-		mutedStyle.Render(wrapText(body, inner)) + "\n\n" +
-		accentStyle.Render("[y]") + mutedStyle.Render(" confirm    ") +
-		accentStyle.Render("[n]") + mutedStyle.Render(" cancel")
+	b := &layoutBuilder{}
+	b.write(titleStyle.Render(title) + "\n\n")
+	b.write(mutedStyle.Render(wrapText(body, inner)) + "\n\n")
+	b.addActions(m.confirmActions(), m.confirmHover, inner, 0)
 
-	return centeredCard(m.width, m.height, cardStyle(width).Render(content))
+	screen, ox, oy := panelLayout(m.width, m.height, strings.TrimSuffix(b.String(), "\n"), inner, 2, 0)
+	return screen, b.targets.shift(ox, oy)
+}
+
+func (m chatModel) handleConfirmMouse(msg tea.MouseMsg) (chatModel, tea.Cmd) {
+	if m.confirm == nil {
+		return m, nil
+	}
+
+	_, targets := m.confirmLayout()
+	target, ok := targets.at(msg.X, msg.Y)
+
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		m.confirmHover = ""
+		if ok {
+			m.confirmHover = target.action
+			setPointerShape("pointer")
+		} else {
+			resetPointerShape()
+		}
+		return m, nil
+	case tea.MouseActionRelease:
+		m.confirmHover = ""
+		return m, nil
+	}
+
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft || !ok {
+		return m, nil
+	}
+
+	if target.action == "yes" {
+		return m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	}
+	return m.handleConfirmKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 }
 
 func (m chatModel) upsertSession(session sessionData) []sessionData {

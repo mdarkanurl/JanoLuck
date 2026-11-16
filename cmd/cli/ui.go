@@ -41,6 +41,9 @@ type appModel struct {
 
 	help         bool
 	helpViewport viewport.Model
+	helpHover    bool
+
+	loadingHover string
 }
 
 type bootstrapMsg struct {
@@ -65,6 +68,8 @@ type sessionExpiredMsg struct {
 type profileSavedMsg struct {
 	profile profileData
 }
+
+type backToChatMsg struct{}
 
 func newAppModel(c *client, apiURL string) appModel {
 	spin := spinner.New()
@@ -111,12 +116,12 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		if m.help {
-			var cmd tea.Cmd
-			m.helpViewport, cmd = m.helpViewport.Update(msg)
-			return m, cmd
+			return m.handleHelpMouse(msg)
 		}
 
 	case tea.KeyMsg:
+		resetPointerShape()
+
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
@@ -125,13 +130,14 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "esc", "ctrl+h", "?":
 				m.help = false
+				m.helpHover = false
+				resetPointerShape()
 				if m.screen == screenChat {
 					m.chat.focusInput()
 				}
 				return m, nil
 			}
 
-			// While the help panel is open, every other key scrolls it.
 			var cmd tea.Cmd
 			m.helpViewport, cmd = m.helpViewport.Update(msg)
 			return m, cmd
@@ -145,12 +151,14 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == screenProfile && msg.String() == "esc" && !m.profile.saving {
 			m.screen = screenChat
 			m.chat.focusInput()
+			resetPointerShape()
 			return m, nil
 		}
 
 		if m.screen == screenPassword && msg.String() == "esc" && !m.password.saving {
 			m.screen = screenChat
 			m.chat.focusInput()
+			resetPointerShape()
 			return m, nil
 		}
 
@@ -172,14 +180,24 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.helpViewport.GotoTop()
 		return m, nil
 
+	case backToChatMsg:
+		if m.screen == screenProfile || m.screen == screenPassword {
+			m.screen = screenChat
+			m.chat.focusInput()
+			resetPointerShape()
+		}
+		return m, nil
+
 	case openProfileMsg:
 		m.profile = newProfileModel(m.client, m.me, m.chat.profile, m.width, m.height)
 		m.screen = screenProfile
+		resetPointerShape()
 		return m, m.profile.Init()
 
 	case openPasswordMsg:
 		m.password = newPasswordModel(m.client, m.width, m.height)
 		m.screen = screenPassword
+		resetPointerShape()
 		return m, m.password.Init()
 
 	case bootstrapMsg:
@@ -262,14 +280,42 @@ func (m appModel) handleBootstrap(msg bootstrapMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m appModel) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return m, nil
-	}
+	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		_, targets := m.loadingLayout()
+		target, ok := targets.at(msg.X, msg.Y)
 
-	if m.loadingErr != "" && key.String() == "r" {
-		m.loadingErr = ""
-		return m, tea.Batch(bootstrapCmd(m.client), m.spinner.Tick)
+		switch msg.Action {
+		case tea.MouseActionMotion:
+			m.loadingHover = ""
+			if ok && (target.action == "retry" || target.action == "quit") {
+				m.loadingHover = target.action
+				setPointerShape("pointer")
+			} else {
+				resetPointerShape()
+			}
+			return m, nil
+		case tea.MouseActionRelease:
+			m.loadingHover = ""
+			return m, nil
+		}
+
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && ok {
+			switch target.action {
+			case "retry":
+				m.loadingErr = ""
+				return m, tea.Batch(bootstrapCmd(m.client), m.spinner.Tick)
+			case "quit":
+				return m, tea.Quit
+			}
+		}
+		return m, nil
+
+	case tea.KeyMsg:
+		if m.loadingErr != "" && msg.String() == "r" {
+			m.loadingErr = ""
+			return m, tea.Batch(bootstrapCmd(m.client), m.spinner.Tick)
+		}
 	}
 
 	return m, nil
@@ -301,39 +347,42 @@ func (m appModel) View() string {
 }
 
 func (m appModel) loadingView() string {
+	screen, _ := m.loadingLayout()
+	return screen
+}
+
+func (m appModel) loadingLayout() (string, clickMap) {
 	width := min(66, max(34, m.width-4))
 
-	var body strings.Builder
-	body.WriteString(logoStyle.Render("JanoLuck"))
-	body.WriteString("\n")
-	body.WriteString(mutedStyle.Render("your optimistic friend for what-ifs"))
-	body.WriteString("\n\n")
+	b := &layoutBuilder{}
+	b.write(logoStyle.Render("JanoLuck") + "\n")
+	b.write(mutedStyle.Render("your optimistic friend for what-ifs") + "\n\n")
 
 	if m.loadingErr == "" {
-		body.WriteString(m.spinner.View())
-		body.WriteString(" ")
-		body.WriteString(mutedStyle.Render("Connecting..."))
-		body.WriteString("\n")
-		body.WriteString(mutedStyle.Render(truncate(m.apiURL, width)))
+		b.write(m.spinner.View() + " " + mutedStyle.Render("Connecting...") + "\n")
+		b.write(mutedStyle.Render(truncate(m.apiURL, width)))
 	} else {
-		body.WriteString(dangerStyle.Render("Could not connect"))
-		body.WriteString("\n\n")
-		body.WriteString(mutedStyle.Render(wrapText(m.loadingErr, width)))
-		body.WriteString("\n\n")
-		body.WriteString(accentStyle.Render("[r]") + mutedStyle.Render(" retry    "))
-		body.WriteString(accentStyle.Render("[ctrl+c]") + mutedStyle.Render(" quit"))
+		b.write(dangerStyle.Render("Could not connect") + "\n\n")
+		b.write(mutedStyle.Render(wrapText(m.loadingErr, width)) + "\n\n")
+		b.addCenteredActions([]actionItem{
+			{key: "r", label: "retry", action: "retry"},
+			{key: "ctrl+c", label: "quit", action: "quit"},
+		}, m.hoveredAction(), width)
 	}
 
 	block := lipgloss.NewStyle().
 		Width(width).
 		Align(lipgloss.Center).
-		Render(body.String())
+		Render(b.String())
 
-	return centeredCard(m.width, m.height, block)
+	screen, ox, oy := centeredBlock(m.width, m.height, block)
+	return screen, b.targets.shift(ox, oy)
 }
 
-// helpPanelWidth returns the total width of the help panel and the width
-// available to its contents, inside the border and horizontal padding.
+func (m appModel) hoveredAction() string {
+	return m.loadingHover
+}
+
 func helpPanelWidth(termWidth int) (panelWidth, inner int) {
 	panelWidth = min(72, max(36, termWidth-4))
 	if termWidth > 0 {
@@ -342,8 +391,6 @@ func helpPanelWidth(termWidth int) (panelWidth, inner int) {
 	return panelWidth, max(12, panelWidth-6)
 }
 
-// helpPanelHeight returns the height of the help panel in lines. It leaves one
-// blank line above and below the panel when the terminal has room.
 func helpPanelHeight(termHeight int) int {
 	height := min(34, termHeight-2)
 	if termHeight > 0 {
@@ -352,7 +399,6 @@ func helpPanelHeight(termHeight int) int {
 	return max(6, height)
 }
 
-// resizeHelp sizes the scrollable help area to the current terminal.
 func (m *appModel) resizeHelp() {
 	if m.width <= 0 || m.height <= 0 {
 		return
@@ -362,7 +408,6 @@ func (m *appModel) resizeHelp() {
 	panelHeight := helpPanelHeight(m.height)
 
 	m.helpViewport.Width = inner
-	// Border (2), title (1), hairline (1) and footer (1) are not scrollable.
 	m.helpViewport.Height = max(2, panelHeight-5)
 	m.helpViewport.SetContent(helpContent(inner))
 }
@@ -396,6 +441,11 @@ func helpContent(width int) string {
 		entry("pgup/pgdn", "scroll a page"),
 		entry("ctrl+u/d", "scroll half a page"),
 		"",
+		mutedStyle.Render("MOUSE"),
+		entry("click", "focus fields, press buttons, open rows"),
+		entry("wheel", "scroll pickers, help and conversations"),
+		entry("hover", "highlight items and change the pointer"),
+		"",
 		mutedStyle.Render("SESSIONS"),
 		entry("type", "filter conversations"),
 		entry("↑ / ↓", "move through conversations"),
@@ -418,8 +468,12 @@ func helpContent(width int) string {
 }
 
 func (m appModel) helpView() string {
+	screen, _ := m.helpLayout()
+	return screen
+}
+
+func (m appModel) helpLayout() (string, clickMap) {
 	_, inner := helpPanelWidth(m.width)
-	panelHeight := helpPanelHeight(m.height)
 
 	title := titleStyle.Render("Commands & shortcuts")
 	if m.helpViewport.TotalLineCount() > m.helpViewport.VisibleLineCount() {
@@ -427,32 +481,69 @@ func (m appModel) helpView() string {
 		title = spread(title, mutedStyle.Render(fmt.Sprintf("%d%%", percent)), inner)
 	}
 
-	footer := "↑↓ scroll · pgup/pgdn page · ctrl+u/d half page · esc close"
-	if inner < 52 {
-		footer = "↑↓ scroll · esc close"
+	items := make([]actionItem, 0, 2)
+	if !m.helpViewport.AtBottom() {
+		hint := "↑↓ scroll"
+		if inner >= 52 {
+			hint = "↑↓ scroll · pgup/pgdn page · ctrl+u/d half page"
+		}
+		items = append(items, actionItem{label: hint})
 	}
-	if m.helpViewport.AtBottom() {
-		footer = "esc close"
+	items = append(items, actionItem{key: "esc", label: "close", action: "close"})
+
+	hover := ""
+	if m.helpHover {
+		hover = "close"
 	}
 
-	body := title + "\n" +
-		hairlineStyle.Render(strings.Repeat("─", max(1, inner))) + "\n" +
-		m.helpViewport.View() + "\n" +
-		mutedStyle.Render(truncate(footer, inner))
+	b := &layoutBuilder{}
+	b.write(title + "\n")
+	b.write(hairlineStyle.Render(strings.Repeat("─", max(1, inner))) + "\n")
+	b.write(m.helpViewport.View() + "\n")
 
-	panel := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorPrimary).
-		Padding(0, 2).
-		Width(inner + 4).
-		Render(body)
+	lines, spans := renderActions(items, hover, inner)
+	start := b.line
+	b.write(strings.Join(lines, "\n"))
+	for _, span := range spans {
+		span.y += start
+		b.add(span)
+	}
 
-	// Guard against a panel taller than the terminal on very short windows.
-	panel = lipgloss.NewStyle().
-		MaxHeight(max(1, panelHeight)).
-		Render(panel)
+	screen, ox, oy := panelLayout(m.width, m.height, b.String(), inner, 2, 0)
+	return screen, b.targets.shift(ox, oy)
+}
 
-	return centeredCard(m.width, m.height, panel)
+func (m appModel) handleHelpMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	_, targets := m.helpLayout()
+	target, ok := targets.at(msg.X, msg.Y)
+
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		m.helpHover = ok && target.action == "close"
+		if m.helpHover {
+			setPointerShape("pointer")
+		} else {
+			resetPointerShape()
+		}
+		return m, nil
+	case tea.MouseActionRelease:
+		m.helpHover = false
+		return m, nil
+	}
+
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && ok && target.action == "close" {
+		m.help = false
+		m.helpHover = false
+		resetPointerShape()
+		if m.screen == screenChat {
+			m.chat.focusInput()
+		}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.helpViewport, cmd = m.helpViewport.Update(msg)
+	return m, cmd
 }
 
 func cardStyle(width int) lipgloss.Style {

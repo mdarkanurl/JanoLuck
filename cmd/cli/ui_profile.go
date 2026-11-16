@@ -24,8 +24,11 @@ type profileModel struct {
 	existing bool
 
 	focus  int
+	hover  int
 	saving bool
 	err    string
+
+	footerHover string
 
 	spinner spinner.Model
 }
@@ -150,6 +153,9 @@ func (m profileModel) Update(msg tea.Msg) (profileModel, tea.Cmd) {
 		}
 		return m, func() tea.Msg { return profileSavedMsg{profile: msg.profile} }
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "tab", "down":
@@ -194,58 +200,121 @@ func (m profileModel) save() (profileModel, tea.Cmd) {
 }
 
 func (m profileModel) View() string {
+	screen, _ := m.profileLayout()
+	return screen
+}
+
+func (m profileModel) profileLayout() (string, clickMap) {
 	cardWidth := min(64, max(40, m.width-4))
 	inner := cardWidth - 2
 
-	var body strings.Builder
-	body.WriteString(logoStyle.Render("JanoLuck"))
-	body.WriteString("\n")
-	body.WriteString(mutedStyle.Render(truncate(m.me.Email, inner)))
-	body.WriteString("\n\n")
+	b := &layoutBuilder{}
+
+	field := func(index int, label string, input textinput.Model, focused bool) {
+		start := b.line
+		rendered := m.renderField(label, input, focused, inner, index == m.hover)
+		b.write(rendered + "\n")
+
+		boxLines := strings.Split(rendered, "\n")
+		b.add(clickTarget{
+			action: "field",
+			index:  index,
+			x:      0,
+			y:      start,
+			width:  lipgloss.Width(boxLines[len(boxLines)-1]),
+			height: len(boxLines),
+		})
+	}
+
+	b.write(logoStyle.Render("JanoLuck") + "\n")
+	b.write(mutedStyle.Render(truncate(m.me.Email, inner)) + "\n\n")
 
 	if m.existing {
-		body.WriteString(titleStyle.Render("Edit your profile"))
-		body.WriteString("\n")
-		body.WriteString(mutedStyle.Render("Jano uses this to make its guesses feel personal."))
+		b.write(titleStyle.Render("Edit your profile") + "\n")
+		b.write(mutedStyle.Render("Jano uses this to make its guesses feel personal.") + "\n")
 	} else {
-		body.WriteString(titleStyle.Render("Tell Jano about you"))
-		body.WriteString("\n")
-		body.WriteString(mutedStyle.Render("A little context makes the what-ifs better."))
+		b.write(titleStyle.Render("Tell Jano about you") + "\n")
+		b.write(mutedStyle.Render("A little context makes the what-ifs better.") + "\n")
 	}
-	body.WriteString("\n\n")
+	b.write("\n")
 
-	body.WriteString(m.renderField("Name", m.name, m.focus == 0, inner))
-	body.WriteString("\n")
-	body.WriteString(m.renderField(questionOne, m.qOne, m.focus == 1, inner))
-	body.WriteString("\n")
-	body.WriteString(m.renderField(questionTwo, m.qTwo, m.focus == 2, inner))
-	body.WriteString("\n\n")
+	field(0, "Name", m.name, m.focus == 0)
+	b.write("\n")
+	field(1, questionOne, m.qOne, m.focus == 1)
+	b.write("\n")
+	field(2, questionTwo, m.qTwo, m.focus == 2)
+	b.write("\n\n")
 
 	if m.err != "" {
-		body.WriteString(dangerStyle.Render(wrapText(m.err, inner)))
-		body.WriteString("\n")
+		b.write(dangerStyle.Render(wrapText(m.err, inner)) + "\n")
 	}
 	if m.saving {
-		body.WriteString(m.spinner.View() + " " + mutedStyle.Render("Saving..."))
-		body.WriteString("\n")
+		b.write(m.spinner.View() + " " + mutedStyle.Render("Saving...") + "\n")
 	}
 
-	body.WriteString("\n")
-	body.WriteString(accentStyle.Render("[enter]") + mutedStyle.Render(" save    "))
-	body.WriteString(accentStyle.Render("[tab]") + mutedStyle.Render(" next    "))
-	body.WriteString(accentStyle.Render("[esc]") + mutedStyle.Render(" back"))
+	b.write("\n")
+	b.addActions([]actionItem{
+		{key: "enter", label: "save", action: "save"},
+		{key: "tab", label: "next", action: "next"},
+		{key: "esc", label: "back", action: "back"},
+	}, m.footerHover, inner, 0)
 
-	block := lipgloss.NewStyle().
-		Width(cardWidth).
-		Render(body.String())
+	block := padLines(strings.TrimSuffix(b.String(), "\n"), cardWidth)
+	screen, ox, oy := centeredBlock(m.width, m.height, block)
 
-	return centeredCard(m.width, m.height, block)
+	return screen, b.targets.shift(ox, oy)
 }
 
-func (m profileModel) renderField(label string, input textinput.Model, focused bool, width int) string {
+func (m profileModel) handleMouse(msg tea.MouseMsg) (profileModel, tea.Cmd) {
+	_, targets := m.profileLayout()
+	target, ok := targets.at(msg.X, msg.Y)
+
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		m.hover = -1
+		m.footerHover = ""
+		if ok {
+			if target.action == "field" {
+				m.hover = target.index
+			} else {
+				m.footerHover = target.action
+			}
+			setPointerShape(target.pointerShape())
+		} else {
+			resetPointerShape()
+		}
+		return m, nil
+	case tea.MouseActionRelease:
+		m.hover = -1
+		m.footerHover = ""
+		return m, nil
+	}
+
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft || !ok {
+		return m, nil
+	}
+
+	switch target.action {
+	case "field":
+		return m, m.focusField(target.index)
+	case "save":
+		return m.save()
+	case "next":
+		return m, m.focusField(m.focus + 1)
+	case "back":
+		return m, func() tea.Msg { return backToChatMsg{} }
+	}
+
+	return m, nil
+}
+
+func (m profileModel) renderField(label string, input textinput.Model, focused bool, width int, hovered bool) string {
 	labelStyle := mutedStyle
 	if focused {
 		labelStyle = accentStyle
+	}
+	if hovered && !focused {
+		return hoverField(label, input.View(), width)
 	}
 	return labelStyle.Render(truncate(label, width)) + "\n" + fieldBorder(focused, width).Render(input.View())
 }

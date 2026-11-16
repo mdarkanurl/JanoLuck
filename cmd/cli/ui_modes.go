@@ -25,6 +25,8 @@ type modePicker struct {
 	items    []modeData
 	activeID string
 
+	hover int
+
 	form *modeForm
 }
 
@@ -35,6 +37,9 @@ type modeForm struct {
 	name   textinput.Model
 	prompt textarea.Model
 	focus  int
+	hover  int
+
+	footerHover string
 
 	saving bool
 	err    string
@@ -591,13 +596,28 @@ func (m chatModel) modesView() string {
 	if m.modes.form != nil {
 		return m.modeFormView()
 	}
+	screen, _ := m.modesLayout()
+	return screen
+}
 
+func (m chatModel) modesLayout() (string, clickMap) {
 	inner := m.pickerInnerWidth()
+	matches := m.modeMatches()
+
+	maxRows := max(3, min(len(matches), m.height-13))
+	start := 0
+	if m.modes.index >= maxRows {
+		start = m.modes.index - maxRows + 1
+	}
+	end := min(len(matches), start+maxRows)
+
+	b := &layoutBuilder{}
 
 	title := titleStyle.Render("Prediction modes")
 	if len(m.modes.items) > 0 {
 		title += "  " + mutedStyle.Render(fmt.Sprintf("%d", len(m.modes.items)))
 	}
+	b.write(title + "\n")
 
 	active := "none"
 	activeStyle := mutedStyle
@@ -605,34 +625,141 @@ func (m chatModel) modesView() string {
 		active = name
 		activeStyle = accentStyle
 	}
-
-	lines := []string{
-		title,
-		mutedStyle.Render("active: ") + activeStyle.Render(truncate(active, max(6, inner-8))),
-	}
+	b.write(mutedStyle.Render("active: ") + activeStyle.Render(truncate(active, max(6, inner-8))) + "\n")
 
 	if status := m.modesStatus(inner); status != "" {
-		lines = append(lines, status)
+		b.write(status + "\n")
 	}
 
-	lines = append(lines,
-		m.modes.filter.View(),
-		hairlineStyle.Render(strings.Repeat("─", max(1, inner))),
-		m.modeListView(inner),
-		"",
-		m.modesFooter(inner),
-	)
+	filterView := m.modes.filter.View()
+	filterLine := b.line
+	b.write(filterView + "\n")
+	b.add(clickTarget{
+		action: "filter",
+		x:      0,
+		y:      filterLine,
+		width:  lipgloss.Width(filterView),
+		height: 1,
+	})
+	b.write(hairlineStyle.Render(strings.Repeat("─", max(1, inner))) + "\n")
 
-	content := strings.Join(lines, "\n")
+	switch {
+	case len(matches) == 0 && m.modes.loading:
+		b.write(m.spinner.View() + " " + mutedStyle.Render("Loading modes...") + "\n")
+	case len(matches) == 0:
+		empty := "No modes yet. Press n to create one."
+		if strings.TrimSpace(m.modes.filter.Value()) != "" {
+			empty = "No modes match your filter."
+		}
+		b.write(mutedStyle.Render(truncate(empty, inner)) + "\n")
+	default:
+		for i := start; i < end; i++ {
+			row := m.modeRow(matches[i], i, inner, i == m.modesHover)
+			rowLine := b.line
+			b.write(row + "\n")
+			b.add(clickTarget{
+				action: "row",
+				index:  i,
+				x:      0,
+				y:      rowLine,
+				width:  inner,
+				height: 1,
+			})
+		}
+	}
 
-	panel := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorPrimary).
-		Padding(1, 2).
-		Width(inner + 4).
-		Render(content)
+	b.write("\n")
+	b.addActions(m.modesActions(), m.modesFooterHover, inner, 0)
 
-	return centeredCard(m.width, m.height, panel)
+	screen, ox, oy := panelLayout(m.width, m.height, strings.TrimSuffix(b.String(), "\n"), inner, 2, 1)
+	return screen, b.targets.shift(ox, oy)
+}
+
+func (m chatModel) modesActions() []actionItem {
+	return []actionItem{
+		{key: "enter", label: "use", action: "use"},
+		{key: "/", label: "filter", action: "filter"},
+		{key: "n", label: "new", action: "new"},
+		{key: "e", label: "edit", action: "edit"},
+		{key: "d", label: "delete", action: "delete"},
+		{key: "c", label: "clear", action: "clear"},
+		{key: "esc", label: "close", action: "close"},
+	}
+}
+
+func (m chatModel) handleModesMouse(msg tea.MouseMsg) (chatModel, tea.Cmd) {
+	if m.modes == nil || m.modes.form != nil {
+		return m, nil
+	}
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.moveMode(-1)
+		resetPointerShape()
+		return m, nil
+	case tea.MouseButtonWheelDown:
+		m.moveMode(1)
+		resetPointerShape()
+		return m, nil
+	}
+
+	_, targets := m.modesLayout()
+	target, ok := targets.at(msg.X, msg.Y)
+
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		m.modesHover = -1
+		m.modesFooterHover = ""
+		if ok {
+			switch target.action {
+			case "row":
+				m.modesHover = target.index
+			case "filter":
+			default:
+				m.modesFooterHover = target.action
+			}
+			setPointerShape(target.pointerShape())
+		} else {
+			resetPointerShape()
+		}
+		return m, nil
+	case tea.MouseActionRelease:
+		m.modesHover = -1
+		m.modesFooterHover = ""
+		return m, nil
+	}
+
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft || !ok {
+		return m, nil
+	}
+
+	switch target.action {
+	case "filter":
+		m.modes.filtering = true
+		m.modes.filter.Focus()
+		m.modes.filter.CursorEnd()
+		return m, nil
+	case "row":
+		m.modes.index = target.index
+		return m.activateModeSelection()
+	case "use":
+		return m.activateModeSelection()
+	case "new":
+		return m.openModeForm(false)
+	case "edit":
+		return m.openModeForm(true)
+	case "delete":
+		return m.confirmDeleteMode()
+	case "clear":
+		return m.clearActiveModeSelection()
+	case "close":
+		m.modes = nil
+		m.focusInput()
+		resetPointerShape()
+		return m, nil
+	}
+
+	return m, nil
 }
 
 func (m chatModel) modesStatus(inner int) string {
@@ -653,39 +780,7 @@ func (m chatModel) modesStatus(inner int) string {
 	return ""
 }
 
-func (m chatModel) modeListView(inner int) string {
-	if m.modes == nil {
-		return ""
-	}
-
-	matches := m.modeMatches()
-
-	if m.modes.loading && len(matches) == 0 {
-		return m.spinner.View() + " " + mutedStyle.Render("Loading modes...")
-	}
-	if len(matches) == 0 {
-		if strings.TrimSpace(m.modes.filter.Value()) != "" {
-			return mutedStyle.Render("No modes match your filter.")
-		}
-		return mutedStyle.Render("No modes yet. Press n to create one.")
-	}
-
-	maxRows := max(3, min(len(matches), m.height-13))
-	start := 0
-	if m.modes.index >= maxRows {
-		start = m.modes.index - maxRows + 1
-	}
-	end := min(len(matches), start+maxRows)
-
-	rows := make([]string, 0, end-start)
-	for i := start; i < end; i++ {
-		rows = append(rows, m.modeRow(matches[i], i, inner))
-	}
-
-	return strings.Join(rows, "\n")
-}
-
-func (m chatModel) modeRow(mode modeData, index, width int) string {
+func (m chatModel) modeRow(mode modeData, index, width int, hovered bool) string {
 	marker := "  "
 	if mode.ID == m.modes.activeID {
 		marker = "● "
@@ -707,6 +802,8 @@ func (m chatModel) modeRow(mode modeData, index, width int) string {
 	switch {
 	case index == m.modes.index:
 		return selectedStyle.Render(line)
+	case hovered:
+		return hoverStyle.Render(line)
 	case mode.ID == m.modes.activeID:
 		return accentStyle.Render(line)
 	default:
@@ -714,21 +811,36 @@ func (m chatModel) modeRow(mode modeData, index, width int) string {
 	}
 }
 
-func (m chatModel) modesFooter(inner int) string {
-	footer := "↑↓ move · enter use · c clear · n new · e edit · d delete · / filter · esc close"
-	if m.modes != nil && m.modes.filtering {
-		footer = "type to filter · ↑↓ move · enter use · esc done"
-	}
-	return mutedStyle.Render(truncate(footer, inner))
+func (m chatModel) modeFormView() string {
+	screen, _ := m.modeFormLayout()
+	return screen
 }
 
-func (m chatModel) modeFormView() string {
+func (m chatModel) modeFormLayout() (string, clickMap) {
 	if m.modes == nil || m.modes.form == nil {
-		return ""
+		return "", nil
 	}
 
 	form := m.modes.form
 	inner := m.pickerInnerWidth()
+
+	b := &layoutBuilder{}
+
+	field := func(index int, label string, view string, focused bool) {
+		start := b.line
+		rendered := m.modeFormField(label, view, focused, inner, index == form.hover)
+		b.write(rendered)
+
+		boxLines := strings.Split(rendered, "\n")
+		b.add(clickTarget{
+			action: "field",
+			index:  index,
+			x:      0,
+			y:      start,
+			width:  lipgloss.Width(boxLines[len(boxLines)-1]),
+			height: len(boxLines),
+		})
+	}
 
 	title := "New mode"
 	hint := "Describe the voice and instructions Jano should use in this mode."
@@ -737,46 +849,97 @@ func (m chatModel) modeFormView() string {
 		hint = "Update the name or instructions for this mode."
 	}
 
-	var body strings.Builder
-	body.WriteString(titleStyle.Render(title))
-	body.WriteString("\n")
-	body.WriteString(mutedStyle.Render(wrapText(hint, inner)))
-	body.WriteString("\n\n")
+	b.write(titleStyle.Render(title) + "\n")
+	b.write(mutedStyle.Render(wrapText(hint, inner)) + "\n\n")
 
-	body.WriteString(m.modeFormField("Name", form.name.View(), form.focus == 0, inner))
-	body.WriteString("\n")
-	body.WriteString(m.modeFormField("Instructions", form.prompt.View(), form.focus == 1, inner))
-	body.WriteString("\n\n")
+	field(0, "Name", form.name.View(), form.focus == 0)
+	b.write("\n")
+	field(1, "Instructions", form.prompt.View(), form.focus == 1)
+	b.write("\n\n")
 
 	if form.err != "" {
-		body.WriteString(dangerStyle.Render(wrapText(form.err, inner)))
-		body.WriteString("\n")
+		b.write(dangerStyle.Render(wrapText(form.err, inner)) + "\n")
 	}
 	if form.saving {
-		body.WriteString(m.spinner.View() + " " + mutedStyle.Render("Saving..."))
-		body.WriteString("\n")
+		b.write(m.spinner.View() + " " + mutedStyle.Render("Saving...") + "\n")
 	}
 
-	body.WriteString("\n")
-	body.WriteString(accentStyle.Render("[enter]") + mutedStyle.Render(" save    "))
-	body.WriteString(accentStyle.Render("[tab]") + mutedStyle.Render(" next    "))
-	body.WriteString(accentStyle.Render("[ctrl+j]") + mutedStyle.Render(" newline    "))
-	body.WriteString(accentStyle.Render("[esc]") + mutedStyle.Render(" cancel"))
+	b.write("\n")
+	b.addActions([]actionItem{
+		{key: "enter", label: "save", action: "save"},
+		{key: "tab", label: "next", action: "next"},
+		{key: "ctrl+j", label: "newline", action: "newline"},
+		{key: "esc", label: "cancel", action: "cancel"},
+	}, form.footerHover, inner, 0)
 
-	panel := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorPrimary).
-		Padding(1, 2).
-		Width(inner + 4).
-		Render(body.String())
-
-	return centeredCard(m.width, m.height, panel)
+	screen, ox, oy := panelLayout(m.width, m.height, strings.TrimSuffix(b.String(), "\n"), inner, 2, 1)
+	return screen, b.targets.shift(ox, oy)
 }
 
-func (m chatModel) modeFormField(label, view string, focused bool, width int) string {
+func (m chatModel) handleModeFormMouse(msg tea.MouseMsg) (chatModel, tea.Cmd) {
+	if m.modes == nil || m.modes.form == nil {
+		return m, nil
+	}
+
+	form := m.modes.form
+	_, targets := m.modeFormLayout()
+	target, ok := targets.at(msg.X, msg.Y)
+
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		form.hover = -1
+		form.footerHover = ""
+		if ok {
+			if target.action == "field" {
+				form.hover = target.index
+			} else {
+				form.footerHover = target.action
+			}
+			setPointerShape(target.pointerShape())
+		} else {
+			resetPointerShape()
+		}
+		m.modes.form = form
+		return m, nil
+	case tea.MouseActionRelease:
+		form.hover = -1
+		form.footerHover = ""
+		m.modes.form = form
+		return m, nil
+	}
+
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft || !ok {
+		return m, nil
+	}
+
+	switch target.action {
+	case "field":
+		form.focusField(target.index)
+	case "save":
+		m.modes.form = form
+		return m.saveModeForm()
+	case "next":
+		form.focusField(form.focus + 1)
+	case "newline":
+		form.focusField(1)
+		form.prompt.InsertString("\n")
+	case "cancel":
+		m.modes.form = nil
+		resetPointerShape()
+		return m, nil
+	}
+
+	m.modes.form = form
+	return m, nil
+}
+
+func (m chatModel) modeFormField(label, view string, focused bool, width int, hovered bool) string {
 	labelStyle := mutedStyle
 	if focused {
 		labelStyle = accentStyle
+	}
+	if hovered && !focused {
+		return hoverField(label, view, width)
 	}
 	return labelStyle.Render(truncate(label, width)) + "\n" + fieldBorder(focused, width).Render(view)
 }

@@ -25,8 +25,11 @@ type passwordModel struct {
 	confirm textinput.Model
 
 	focus  int
+	hover  int
 	saving bool
 	err    string
+
+	footerHover string
 
 	spinner spinner.Model
 }
@@ -109,6 +112,101 @@ func (m *passwordModel) focusField(index int) tea.Cmd {
 	return nil
 }
 
+func (m passwordModel) passwordLayout() (string, clickMap) {
+	cardWidth := min(64, max(40, m.width-4))
+	inner := cardWidth - 2
+
+	b := &layoutBuilder{}
+
+	field := func(index int, label string, input textinput.Model, focused bool) {
+		start := b.line
+		rendered := m.renderField(label, input, focused, inner, index == m.hover)
+		b.write(rendered)
+
+		boxLines := strings.Split(rendered, "\n")
+		b.add(clickTarget{
+			action: "field",
+			index:  index,
+			x:      0,
+			y:      start,
+			width:  lipgloss.Width(boxLines[len(boxLines)-1]),
+			height: len(boxLines),
+		})
+	}
+
+	b.write(titleStyle.Render("Change password") + "\n")
+	b.write(mutedStyle.Render("Enter your current password, then choose a new one.") + "\n\n")
+
+	field(0, "Current password", m.current, m.focus == 0)
+	b.write("\n")
+	field(1, "New password", m.next, m.focus == 1)
+	b.write("\n")
+	field(2, "Confirm new password", m.confirm, m.focus == 2)
+	b.write("\n\n")
+
+	if m.err != "" {
+		b.write(dangerStyle.Render(wrapText(m.err, inner)) + "\n")
+	}
+	if m.saving {
+		b.write(m.spinner.View() + " " + mutedStyle.Render("Saving...") + "\n")
+	}
+
+	b.write("\n")
+	b.addActions([]actionItem{
+		{key: "enter", label: "save", action: "save"},
+		{key: "tab", label: "next", action: "next"},
+		{key: "esc", label: "back", action: "back"},
+	}, m.footerHover, inner, 0)
+
+	block := padLines(strings.TrimSuffix(b.String(), "\n"), cardWidth)
+	screen, ox, oy := centeredBlock(m.width, m.height, block)
+
+	return screen, b.targets.shift(ox, oy)
+}
+
+func (m passwordModel) handlePasswordMouse(msg tea.MouseMsg) (passwordModel, tea.Cmd) {
+	_, targets := m.passwordLayout()
+	target, ok := targets.at(msg.X, msg.Y)
+
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		m.hover = -1
+		m.footerHover = ""
+		if ok {
+			if target.action == "field" {
+				m.hover = target.index
+			} else {
+				m.footerHover = target.action
+			}
+			setPointerShape(target.pointerShape())
+		} else {
+			resetPointerShape()
+		}
+		return m, nil
+	case tea.MouseActionRelease:
+		m.hover = -1
+		m.footerHover = ""
+		return m, nil
+	}
+
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft || !ok {
+		return m, nil
+	}
+
+	switch target.action {
+	case "field":
+		return m, m.focusField(target.index)
+	case "save":
+		return m.save()
+	case "next":
+		return m, m.focusField(m.focus + 1)
+	case "back":
+		return m, func() tea.Msg { return backToChatMsg{} }
+	}
+
+	return m, nil
+}
+
 func (m passwordModel) Update(msg tea.Msg) (passwordModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
@@ -126,6 +224,9 @@ func (m passwordModel) Update(msg tea.Msg) (passwordModel, tea.Cmd) {
 			return m, nil
 		}
 		return m, func() tea.Msg { return passwordChangedMsg{} }
+
+	case tea.MouseMsg:
+		return m.handlePasswordMouse(msg)
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -179,47 +280,17 @@ func (m passwordModel) save() (passwordModel, tea.Cmd) {
 }
 
 func (m passwordModel) View() string {
-	cardWidth := min(64, max(40, m.width-4))
-	inner := cardWidth - 2
-
-	var body strings.Builder
-	body.WriteString(titleStyle.Render("Change password"))
-	body.WriteString("\n")
-	body.WriteString(mutedStyle.Render("Enter your current password, then choose a new one."))
-	body.WriteString("\n\n")
-
-	body.WriteString(m.renderField("Current password", m.current, m.focus == 0, inner))
-	body.WriteString("\n")
-	body.WriteString(m.renderField("New password", m.next, m.focus == 1, inner))
-	body.WriteString("\n")
-	body.WriteString(m.renderField("Confirm new password", m.confirm, m.focus == 2, inner))
-	body.WriteString("\n\n")
-
-	if m.err != "" {
-		body.WriteString(dangerStyle.Render(wrapText(m.err, inner)))
-		body.WriteString("\n")
-	}
-	if m.saving {
-		body.WriteString(m.spinner.View() + " " + mutedStyle.Render("Saving..."))
-		body.WriteString("\n")
-	}
-
-	body.WriteString("\n")
-	body.WriteString(accentStyle.Render("[enter]") + mutedStyle.Render(" save    "))
-	body.WriteString(accentStyle.Render("[tab]") + mutedStyle.Render(" next    "))
-	body.WriteString(accentStyle.Render("[esc]") + mutedStyle.Render(" back"))
-
-	block := lipgloss.NewStyle().
-		Width(cardWidth).
-		Render(body.String())
-
-	return centeredCard(m.width, m.height, block)
+	screen, _ := m.passwordLayout()
+	return screen
 }
 
-func (m passwordModel) renderField(label string, input textinput.Model, focused bool, width int) string {
+func (m passwordModel) renderField(label string, input textinput.Model, focused bool, width int, hovered bool) string {
 	labelStyle := mutedStyle
 	if focused {
 		labelStyle = accentStyle
+	}
+	if hovered && !focused {
+		return hoverField(label, input.View(), width)
 	}
 	return labelStyle.Render(truncate(label, width)) + "\n" + fieldBorder(focused, width).Render(input.View())
 }

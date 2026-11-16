@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -686,6 +687,335 @@ func TestAuthMouseClickFocusesField(t *testing.T) {
 	}
 }
 
+func TestAuthFooterMouseActions(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newAuthModel(c, "http://localhost:3000", 80, 24)
+
+	find := func(model authModel, label string) (int, int) {
+		for y, line := range strings.Split(stripANSI(model.View()), "\n") {
+			if idx := strings.Index(line, label); idx >= 0 {
+				return idx, y
+			}
+		}
+		t.Fatalf("%q not rendered", label)
+		return 0, 0
+	}
+	click := func(model authModel, label string) (authModel, tea.Cmd) {
+		x, y := find(model, label)
+		updated, cmd := model.Update(tea.MouseMsg{
+			X: x + 2, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+		})
+		return updated, cmd
+	}
+
+	signup, _ := click(m, "[ctrl+n] sign up")
+	if signup.mode != authSignup {
+		t.Fatalf("click sign up left mode = %v, want signup", signup.mode)
+	}
+
+	back, _ := click(signup, "[esc] back")
+	if back.mode != authLogin {
+		t.Fatalf("click back left mode = %v, want login", back.mode)
+	}
+
+	_, cmd := click(m, "[ctrl+c] quit")
+	if cmd == nil {
+		t.Fatal("click quit returned no command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("click quit returned %T, want tea.QuitMsg", cmd())
+	}
+}
+
+func TestHoverChangesPointerShape(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	var buf bytes.Buffer
+	oldOut, oldShape := pointerOut, pointerShape
+	pointerOut, pointerShape = &buf, "default"
+	t.Cleanup(func() { pointerOut, pointerShape = oldOut, oldShape })
+
+	m := newAuthModel(c, "http://localhost:3000", 80, 24)
+
+	find := func(label string) (int, int) {
+		for y, line := range strings.Split(stripANSI(m.View()), "\n") {
+			if idx := strings.Index(line, label); idx >= 0 {
+				return idx, y
+			}
+		}
+		t.Fatalf("%q not rendered", label)
+		return 0, 0
+	}
+	move := func(x, y int) authModel {
+		updated, _ := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionMotion})
+		return updated
+	}
+
+	buttonX, buttonY := find("[ctrl+n] sign up")
+	m = move(buttonX+2, buttonY)
+	if !strings.Contains(buf.String(), "\x1b]22;pointer\x1b\\") {
+		t.Fatalf("button hover did not emit pointer shape:\n%q", buf.String())
+	}
+
+	buf.Reset()
+	emailX, emailY := find("Email")
+	m = move(emailX+2, emailY+1)
+	if !strings.Contains(buf.String(), "\x1b]22;text\x1b\\") {
+		t.Fatalf("field hover did not emit text shape:\n%q", buf.String())
+	}
+
+	// Moving within the same target must not repeat the escape sequence.
+	buf.Reset()
+	m = move(emailX+3, emailY+1)
+	if buf.Len() != 0 {
+		t.Fatalf("duplicate pointer shape emitted: %q", buf.String())
+	}
+
+	buf.Reset()
+	m = move(0, 0)
+	if !strings.Contains(buf.String(), "\x1b]22;default\x1b\\") {
+		t.Fatalf("leaving a target did not restore the pointer:\n%q", buf.String())
+	}
+}
+
+func TestSuggestionMouseClickRunsCommand(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newChatModel(c, meData{}, nil, nil, 80, 24)
+	m.input.SetValue("/")
+
+	x, y := 0, 0
+	for row, line := range strings.Split(stripANSI(m.View()), "\n") {
+		if idx := strings.Index(line, "/help"); idx >= 0 {
+			x, y = idx, row
+			break
+		}
+	}
+	if x == 0 && y == 0 {
+		t.Fatal("suggestion row not rendered")
+	}
+
+	updated, cmd := m.Update(tea.MouseMsg{
+		X: x + 2, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	})
+	if cmd == nil {
+		t.Fatal("clicking a suggestion returned no command")
+	}
+	if _, ok := cmd().(openHelpMsg); !ok {
+		t.Fatalf("clicking /help returned %T, want openHelpMsg", cmd())
+	}
+	if updated.input.Value() != "" {
+		t.Fatalf("input after click = %q, want empty", updated.input.Value())
+	}
+}
+
+func TestPickerAndConfirmFooterMouse(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newChatModel(c, meData{}, nil, nil, 80, 24)
+	m, _ = m.openPicker("")
+	m.picker.loading = false
+	m.sessions = []sessionData{{ID: "s1", Name: "First", UpdatedAt: time.Now().Format(time.RFC3339)}}
+
+	x, y := 0, 0
+	for row, line := range strings.Split(stripANSI(m.View()), "\n") {
+		if idx := strings.Index(line, "[esc] close"); idx >= 0 {
+			x, y = idx, row
+			break
+		}
+	}
+	if x == 0 && y == 0 {
+		t.Fatal("picker close button not rendered")
+	}
+	closed, _ := m.Update(tea.MouseMsg{
+		X: x + 2, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	})
+	if closed.picker != nil {
+		t.Fatal("clicking close did not dismiss the picker")
+	}
+
+	confirm := m
+	confirm.confirm = &chatConfirm{action: "delete", sessionID: "s1", name: "First"}
+	x, y = 0, 0
+	for row, line := range strings.Split(stripANSI(confirm.View()), "\n") {
+		if idx := strings.Index(line, "[n] cancel"); idx >= 0 {
+			x, y = idx, row
+			break
+		}
+	}
+	if x == 0 && y == 0 {
+		t.Fatal("confirm cancel button not rendered")
+	}
+	cancelled, _ := confirm.Update(tea.MouseMsg{
+		X: x + 1, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	})
+	if cancelled.confirm != nil {
+		t.Fatal("clicking cancel did not dismiss the confirm dialog")
+	}
+}
+
+func TestModeFooterMouseOpensForm(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	m := newChatModel(c, meData{}, nil, nil, 80, 24)
+	m.modes = newModePicker("", m.pickerInnerWidth())
+	m.modes.loading = false
+	m.modes.items = []modeData{{ID: "builtin", Name: "Motivation", IsBuiltIn: true}}
+
+	x, y := 0, 0
+	for row, line := range strings.Split(stripANSI(m.View()), "\n") {
+		if idx := strings.Index(line, "[n] new"); idx >= 0 {
+			x, y = idx, row
+			break
+		}
+	}
+	if x == 0 && y == 0 {
+		t.Fatal("mode new button not rendered")
+	}
+
+	updated, _ := m.Update(tea.MouseMsg{
+		X: x + 2, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	})
+	if updated.modes == nil || updated.modes.form == nil {
+		t.Fatal("clicking new did not open the mode form")
+	}
+
+	x, y = 0, 0
+	for row, line := range strings.Split(stripANSI(updated.View()), "\n") {
+		if idx := strings.Index(line, "[esc] cancel"); idx >= 0 {
+			x, y = idx, row
+			break
+		}
+	}
+	if x == 0 && y == 0 {
+		t.Fatal("mode form cancel button not rendered")
+	}
+	cancelled, _ := updated.Update(tea.MouseMsg{
+		X: x + 2, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	})
+	if cancelled.modes == nil || cancelled.modes.form != nil {
+		t.Fatal("clicking cancel did not close the mode form")
+	}
+}
+
+func TestProfileBackAndHelpCloseMouse(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	profile := newProfileModel(c, meData{Email: "a@b.c"}, nil, 80, 24)
+	x, y := 0, 0
+	for row, line := range strings.Split(stripANSI(profile.View()), "\n") {
+		if idx := strings.Index(line, "[esc] back"); idx >= 0 {
+			x, y = idx, row
+			break
+		}
+	}
+	if x == 0 && y == 0 {
+		t.Fatal("profile back button not rendered")
+	}
+	_, cmd := profile.Update(tea.MouseMsg{
+		X: x + 2, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	})
+	if cmd == nil {
+		t.Fatal("profile back returned no command")
+	}
+	if _, ok := cmd().(backToChatMsg); !ok {
+		t.Fatalf("profile back returned %T, want backToChatMsg", cmd())
+	}
+
+	app := newAppModel(c, "http://localhost:3000")
+	app.width, app.height = 80, 24
+	app.help = true
+	app.resizeHelp()
+
+	x, y = 0, 0
+	for row, line := range strings.Split(stripANSI(app.View()), "\n") {
+		if idx := strings.Index(line, "[esc] close"); idx >= 0 {
+			x, y = idx, row
+			break
+		}
+	}
+	if x == 0 && y == 0 {
+		t.Fatal("help close button not rendered")
+	}
+
+	updated, _ := app.Update(tea.MouseMsg{
+		X: x + 2, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	})
+	if model, ok := updated.(appModel); !ok || model.help {
+		t.Fatal("clicking help close did not dismiss the panel")
+	}
+}
+
+func TestLoadingRetryMouseClick(t *testing.T) {
+	t.Setenv("JANOLUCK_CONFIG", filepath.Join(t.TempDir(), "auth.json"))
+
+	c, err := newClient("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+
+	app := newAppModel(c, "http://127.0.0.1:1")
+	app.width, app.height = 80, 24
+	app.screen = screenLoading
+	app.loadingErr = "connection refused"
+
+	x, y := 0, 0
+	for row, line := range strings.Split(stripANSI(app.View()), "\n") {
+		if idx := strings.Index(line, "[r] retry"); idx >= 0 {
+			x, y = idx, row
+			break
+		}
+	}
+	if x == 0 && y == 0 {
+		t.Fatal("retry button not rendered")
+	}
+
+	updated, cmd := app.Update(tea.MouseMsg{
+		X: x + 2, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	})
+	model, ok := updated.(appModel)
+	if !ok {
+		t.Fatalf("updated model is %T", updated)
+	}
+	if model.loadingErr != "" {
+		t.Fatalf("loadingErr after clicking retry = %q, want empty", model.loadingErr)
+	}
+	if cmd == nil {
+		t.Fatal("clicking retry returned no command")
+	}
+}
+
 func stripANSI(s string) string {
 	var out []rune
 	inEscape := false
@@ -1025,7 +1355,7 @@ func TestModeViewsRender(t *testing.T) {
 	m.modes.activeID = "builtin"
 
 	view := m.View()
-	for _, want := range []string{"Prediction modes", "active:", "Motivation", "built-in", "Stoic", "custom", "n new"} {
+	for _, want := range []string{"Prediction modes", "active:", "Motivation", "built-in", "Stoic", "custom", "[n] new"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("mode picker view missing %q:\n%s", want, view)
 		}
