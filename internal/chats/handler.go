@@ -157,8 +157,6 @@ func (e *chatStreamEmitter) write(payload ChatStreamPayload) error {
 	return nil
 }
 
-// streamErrorMessage keeps the internal details of a failure private while
-// still telling the client what went wrong.
 func streamErrorMessage(err error) string {
 	switch {
 	case errors.Is(err, ErrInvalidInput),
@@ -170,8 +168,6 @@ func streamErrorMessage(err error) string {
 	}
 }
 
-// CreateChatStream stores the message and streams the prediction back while it
-// is generated.
 func (h *Handler) CreateChatStream(w http.ResponseWriter, r *http.Request) {
 	req, ok := httpx.DecodeJSON[CreateChatRequest](w, r)
 	if !ok {

@@ -28,7 +28,13 @@ func run() error {
 	batch := flag.Int("batch", 500, "maximum messages to produce before checking progress")
 	flag.Parse()
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if err := cfg.Require("DATABASE_URL", "KAFKA_BROKERS"); err != nil {
+		return err
+	}
 
 	db, err := sql.Open("postgres", cfg.DATABASE_URL)
 	if err != nil {

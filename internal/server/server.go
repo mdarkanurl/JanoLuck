@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -39,21 +40,29 @@ const (
 	serverMaxHeaderBytes    = 1 << 20 // 1 MiB
 )
 
-func New() *Server {
-	cfg := config.Load()
+func New() (*Server, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Require("DATABASE_URL", "JWT_SECRET", "KAFKA_BROKERS", "LLM_API_KEY"); err != nil {
+		return nil, err
+	}
 
 	db, err := sql.Open("postgres", cfg.DATABASE_URL)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("open database: %w", err)
 	}
 
 	if err := db.Ping(); err != nil {
-		panic(err)
+		_ = db.Close()
+		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
 	redisDB, err := strconv.Atoi(cfg.REDIS_DB)
 	if err != nil {
-		panic(err)
+		_ = db.Close()
+		return nil, fmt.Errorf("invalid REDIS_DB: %w", err)
 	}
 
 	dbQueries := database.New(db)
@@ -158,7 +167,7 @@ func New() *Server {
 		router:     router,
 		db:         db,
 		producer:   producer,
-	}
+	}, nil
 }
 
 func (s *Server) Start() error {

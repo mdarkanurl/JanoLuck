@@ -33,14 +33,20 @@ var (
 )
 
 type Service struct {
-	repo     *Repository
-	tokens   *TokenService
-	producer *kafka.Producer
-	store    *outbox.Repository
+	repo         *Repository
+	refreshStore refreshTokenStore
+	tokens       *TokenService
+	producer     *kafka.Producer
+	store        *outbox.Repository
+}
+
+type refreshTokenStore interface {
+	StoreRefreshToken(ctx context.Context, userID, refreshHash string, ttl time.Duration) error
+	DeleteRefreshToken(ctx context.Context, userID, refreshHash string) error
 }
 
 func AuthService(repo *Repository, tokens *TokenService, producer *kafka.Producer, opts ...ServiceOption) *Service {
-	s := &Service{repo: repo, tokens: tokens, producer: producer}
+	s := &Service{repo: repo, refreshStore: repo, tokens: tokens, producer: producer}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -233,12 +239,18 @@ func (s *Service) mintTokenPair(ctx context.Context, userID, email, oldRefreshHa
 		return nil, err
 	}
 
-	if oldRefreshHash != "" {
-		_ = s.repo.DeleteRefreshToken(ctx, oldRefreshHash)
+	newHash := HashRefreshToken(refreshToken)
+	if err := s.refreshStore.StoreRefreshToken(ctx, userID, newHash, s.tokens.RefreshTTL()); err != nil {
+		return nil, err
 	}
 
-	if err := s.repo.StoreRefreshToken(ctx, userID, HashRefreshToken(refreshToken), s.tokens.RefreshTTL()); err != nil {
-		return nil, err
+	if oldRefreshHash != "" {
+		if err := s.refreshStore.DeleteRefreshToken(ctx, userID, oldRefreshHash); err != nil {
+			slog.Warn("could not revoke rotated refresh token",
+				"userID", userID,
+				"error", err,
+			)
+		}
 	}
 
 	return &AuthTokens{
@@ -290,13 +302,13 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*AuthTokens
 		return nil, err
 	}
 	if storedUserID != userID {
-		_ = s.repo.DeleteRefreshToken(ctx, oldHash)
+		_ = s.repo.DeleteRefreshToken(ctx, storedUserID, oldHash)
 		return nil, ErrInvalidCredentials
 	}
 
 	user, err := s.repo.GetUserByID(ctx, userID)
 	if err != nil {
-		_ = s.repo.DeleteRefreshToken(ctx, oldHash)
+		_ = s.repo.DeleteRefreshToken(ctx, userID, oldHash)
 		return nil, err
 	}
 

@@ -48,7 +48,13 @@ func main() {
 }
 
 func run() error {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if err := cfg.Require("DATABASE_URL", "KAFKA_BROKERS", "LLM_API_KEY"); err != nil {
+		return err
+	}
 
 	db, err := sql.Open("postgres", cfg.DATABASE_URL)
 	if err != nil {

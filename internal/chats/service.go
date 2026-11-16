@@ -207,8 +207,6 @@ func (s *Service) prepareChat(ctx context.Context, userID, sessionID uuid.UUID, 
 	}
 	embeddingString := vectorString(embedding)
 
-	// The user message is not stored yet, so there is no row to exclude from
-	// the similarity search.
 	previousChats, err := s.repo.ListSimilarChatsBySessionID(ctx, sessionID, uuid.Nil, embeddingString, similarChatsLimit)
 	if err != nil {
 		return chatPrep{}, err
@@ -233,9 +231,6 @@ func (s *Service) prepareChat(ctx context.Context, userID, sessionID uuid.UUID, 
 	}, nil
 }
 
-// storeExchange embeds the prediction and stores the user message and its reply
-// in one transaction. If either insert fails, neither message is kept, so a
-// failed model call can never leave an orphaned user message behind.
 func (s *Service) storeExchange(ctx context.Context, prep chatPrep, prediction string) (Chat, error) {
 	predictionEmbedding, err := s.llm.GenerateEmbedding(ctx, prediction)
 	if err != nil {

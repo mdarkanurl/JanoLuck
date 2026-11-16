@@ -156,14 +156,15 @@ func (r *Repository) DeletePendingUser(ctx context.Context, email string) error 
 }
 
 func (r *Repository) StoreRefreshToken(ctx context.Context, userID, refreshHash string, ttl time.Duration) error {
-	if err := r.redis.Set(ctx, "refresh:"+refreshHash, userID, ttl).Err(); err != nil {
-		return fmt.Errorf("%w: redis Set refresh token: %v", ErrInternal, err)
+	pipe := r.redis.TxPipeline()
+	pipe.Set(ctx, "refresh:"+refreshHash, userID, ttl)
+	pipe.SAdd(ctx, "refresh_by_user:"+userID, refreshHash)
+	pipe.Expire(ctx, "refresh_by_user:"+userID, ttl)
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("%w: redis store refresh token: %v", ErrInternal, err)
 	}
 
-	if err := r.redis.SAdd(ctx, "refresh_by_user:"+userID, refreshHash).Err(); err != nil {
-		return fmt.Errorf("%w: redis SAdd refresh index: %v", ErrInternal, err)
-	}
-	_ = r.redis.Expire(ctx, "refresh_by_user:"+userID, ttl).Err()
 	return nil
 }
 
@@ -181,10 +182,17 @@ func (r *Repository) GetRefreshUserID(ctx context.Context, refreshHash string) (
 	return userID, nil
 }
 
-func (r *Repository) DeleteRefreshToken(ctx context.Context, refreshHash string) error {
-	if err := r.redis.Del(ctx, "refresh:"+refreshHash).Err(); err != nil {
-		return fmt.Errorf("%w: redis Del refresh token: %v", ErrInternal, err)
+func (r *Repository) DeleteRefreshToken(ctx context.Context, userID, refreshHash string) error {
+	pipe := r.redis.TxPipeline()
+	if userID != "" {
+		pipe.SRem(ctx, "refresh_by_user:"+userID, refreshHash)
 	}
+	pipe.Del(ctx, "refresh:"+refreshHash)
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("%w: redis delete refresh token: %v", ErrInternal, err)
+	}
+
 	return nil
 }
 
@@ -235,8 +243,6 @@ func (r *Repository) CreatePasswordReset(ctx context.Context, email, codeHash st
 	return nil
 }
 
-// AllowPasswordReset applies a per-email cooldown so a single address cannot be
-// flooded with reset emails.
 func (r *Repository) AllowPasswordReset(ctx context.Context, email string, cooldown time.Duration) (bool, error) {
 	allowed, err := r.redis.SetNX(ctx, "reset:cooldown:"+email, 1, cooldown).Result()
 	if err != nil {
@@ -245,8 +251,6 @@ func (r *Repository) AllowPasswordReset(ctx context.Context, email string, coold
 	return allowed, nil
 }
 
-// IncrementCodeAttempts counts failed verification/reset attempts for an email.
-// The counter is extended on every attempt so it cannot be left without a TTL.
 func (r *Repository) IncrementCodeAttempts(ctx context.Context, scope, email string, ttl time.Duration) (int64, error) {
 	key := "attempts:" + scope + ":" + email
 
@@ -261,7 +265,6 @@ func (r *Repository) IncrementCodeAttempts(ctx context.Context, scope, email str
 	return attempts, nil
 }
 
-// ClearCodeAttempts removes the attempt counter after a successful verification.
 func (r *Repository) ClearCodeAttempts(ctx context.Context, scope, email string) error {
 	if err := r.redis.Del(ctx, "attempts:"+scope+":"+email).Err(); err != nil {
 		return fmt.Errorf("%w: redis Del code attempts: %v", ErrInternal, err)

@@ -26,7 +26,13 @@ func run() error {
 	timeout := flag.Duration("timeout", 30*time.Second, "how long to wait for the broker")
 	flag.Parse()
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if err := cfg.Require("KAFKA_BROKERS"); err != nil {
+		return err
+	}
 
 	all := topics.All()
 	specs := make([]kafka.Topic, 0, len(all))

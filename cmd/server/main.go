@@ -24,7 +24,10 @@ func main() {
 }
 
 func run() (err error) {
-	srv := server.New()
+	srv, err := server.New()
+	if err != nil {
+		return fmt.Errorf("create server: %w", err)
+	}
 	defer func() {
 		if closeErr := srv.Close(); closeErr != nil {
 			if err == nil {
