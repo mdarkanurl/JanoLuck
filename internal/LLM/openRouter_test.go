@@ -1,12 +1,14 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	openrouter "github.com/OpenRouterTeam/go-sdk"
 )
@@ -98,7 +100,7 @@ func TestGenerateSessionName(t *testing.T) {
 		_, _ = w.Write([]byte(chatResponse("The Hidden Path")))
 	})
 
-	name, err := svc.GenerateSessionName("Will I find love?")
+	name, err := svc.GenerateSessionName(context.Background(), "Will I find love?")
 	if err != nil {
 		t.Fatalf("GenerateSessionName() error = %v", err)
 	}
@@ -124,7 +126,7 @@ func TestGeneratePrediction(t *testing.T) {
 		_, _ = w.Write([]byte(chatResponse("A bright future awaits")))
 	})
 
-	prediction, err := svc.GeneratePrediction("What next?", []string{"first message", "second message"}, "Motivation", "Be uplifting.")
+	prediction, err := svc.GeneratePrediction(context.Background(), "What next?", []string{"first message", "second message"}, "Motivation", "Be uplifting.")
 	if err != nil {
 		t.Fatalf("GeneratePrediction() error = %v", err)
 	}
@@ -146,10 +148,10 @@ func TestChatMethodsErrorResponses(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"message":"bad request","type":"invalid_request_error"}}`))
 	})
 
-	if _, err := svc.GenerateSessionName("hello"); err == nil {
+	if _, err := svc.GenerateSessionName(context.Background(), "hello"); err == nil {
 		t.Error("GenerateSessionName() expected error")
 	}
-	if _, err := svc.GeneratePrediction("hello", nil, "", ""); err == nil {
+	if _, err := svc.GeneratePrediction(context.Background(), "hello", nil, "", ""); err == nil {
 		t.Error("GeneratePrediction() expected error")
 	}
 }
@@ -160,10 +162,10 @@ func TestChatMethodsEmptyChoices(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"chat-1","object":"chat.completion","model":"test-model","choices":[]}`))
 	})
 
-	if _, err := svc.GenerateSessionName("hello"); err == nil {
+	if _, err := svc.GenerateSessionName(context.Background(), "hello"); err == nil {
 		t.Error("GenerateSessionName() expected error for empty choices")
 	}
-	if _, err := svc.GeneratePrediction("hello", nil, "", ""); err == nil {
+	if _, err := svc.GeneratePrediction(context.Background(), "hello", nil, "", ""); err == nil {
 		t.Error("GeneratePrediction() expected error for empty choices")
 	}
 }
@@ -182,7 +184,7 @@ func TestGenerateEmbedding(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"emb-1","object":"list","model":"embed-model","data":[{"index":0,"object":"embedding","embedding":[0.1,0.2,0.3]}]}`))
 		})
 
-		embedding, err := svc.GenerateEmbedding("hello")
+		embedding, err := svc.GenerateEmbedding(context.Background(), "hello")
 		if err != nil {
 			t.Fatalf("GenerateEmbedding() error = %v", err)
 		}
@@ -200,7 +202,7 @@ func TestGenerateEmbedding(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"emb-1","object":"list","model":"embed-model","data":[]}`))
 		})
 
-		if _, err := svc.GenerateEmbedding("hello"); err == nil || !strings.Contains(err.Error(), "empty embeddings data") {
+		if _, err := svc.GenerateEmbedding(context.Background(), "hello"); err == nil || !strings.Contains(err.Error(), "empty embeddings data") {
 			t.Errorf("error = %v, want empty embeddings data", err)
 		}
 	})
@@ -211,7 +213,7 @@ func TestGenerateEmbedding(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"emb-1","object":"list","model":"embed-model","data":[{"index":0,"object":"embedding","embedding":"cGF5bG9hZA=="}]}`))
 		})
 
-		if _, err := svc.GenerateEmbedding("hello"); err == nil || !strings.Contains(err.Error(), "base64 embeddings not supported") {
+		if _, err := svc.GenerateEmbedding(context.Background(), "hello"); err == nil || !strings.Contains(err.Error(), "base64 embeddings not supported") {
 			t.Errorf("error = %v, want base64 unsupported", err)
 		}
 	})
@@ -223,8 +225,38 @@ func TestGenerateEmbedding(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":{"message":"bad request"}}`))
 		})
 
-		if _, err := svc.GenerateEmbedding("hello"); err == nil {
+		if _, err := svc.GenerateEmbedding(context.Background(), "hello"); err == nil {
 			t.Error("expected error")
 		}
 	})
+}
+
+func TestGeneratePredictionRespectsCanceledContext(t *testing.T) {
+	svc := testLLM(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the provider must not be called with a canceled context")
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := svc.GeneratePrediction(ctx, "hello", nil, "", ""); err == nil {
+		t.Fatal("expected an error from a canceled context")
+	}
+}
+
+func TestGeneratePredictionAppliesTimeout(t *testing.T) {
+	svc := testLLM(t, func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(chatResponse("late")))
+	})
+	svc.timeout = 20 * time.Millisecond
+
+	start := time.Now()
+	if _, err := svc.GeneratePrediction(context.Background(), "hello", nil, "", ""); err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("timed out after %v, want close to 20ms", elapsed)
+	}
 }

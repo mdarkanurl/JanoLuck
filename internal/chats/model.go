@@ -21,6 +21,13 @@ type Chat struct {
 	UpdatedAt time.Time
 }
 
+// NewChat describes one message to store as part of a single write.
+type NewChat struct {
+	Role      string
+	Content   string
+	Embedding string
+}
+
 type CreateChatRequest struct {
 	Content string `json:"content" validate:"required,min=1,max=8000"`
 }

@@ -19,7 +19,7 @@ type fakeSummaryGenerator struct {
 	contents []string
 }
 
-func (f *fakeSummaryGenerator) SummarizeSessionContext(_ context.Context, contents []string) (string, error) {
+func (f *fakeSummaryGenerator) SummarizeSession(_ context.Context, contents []string) (string, error) {
 	f.calls++
 	f.contents = contents
 	return f.summary, f.err

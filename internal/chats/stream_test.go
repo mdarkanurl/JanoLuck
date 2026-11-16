@@ -16,15 +16,24 @@ import (
 
 // fakeLanguageModel is a stand-in for the LLM service.
 type fakeLanguageModel struct {
-	embedding  []float64
-	prediction string
-	deltas     []string
-	streamErr  error
-	streamed   bool
-	embedded   []string
+	embedding      []float64
+	embeddingErr   error
+	embeddingErrAt int
+	embedCalls     int
+	prediction     string
+	predictionErr  error
+	deltas         []string
+	streamErr      error
+	streamed       bool
+	embedded       []string
 }
 
-func (f *fakeLanguageModel) GenerateEmbedding(content string) ([]float64, error) {
+func (f *fakeLanguageModel) GenerateEmbedding(ctx context.Context, content string) ([]float64, error) {
+	f.embedCalls++
+	if f.embeddingErr != nil && (f.embeddingErrAt == 0 || f.embedCalls >= f.embeddingErrAt) {
+		return nil, f.embeddingErr
+	}
+
 	f.embedded = append(f.embedded, content)
 
 	if f.embedding != nil {
@@ -34,7 +43,11 @@ func (f *fakeLanguageModel) GenerateEmbedding(content string) ([]float64, error)
 	return []float64{0.1, 0.2}, nil
 }
 
-func (f *fakeLanguageModel) GeneratePrediction(content string, previousChats []string, modeName, modePrompt string) (string, error) {
+func (f *fakeLanguageModel) GeneratePrediction(ctx context.Context, content string, previousChats []string, modeName, modePrompt string) (string, error) {
+	if f.predictionErr != nil {
+		return "", f.predictionErr
+	}
+
 	return f.prediction, nil
 }
 

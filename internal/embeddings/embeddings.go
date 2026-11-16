@@ -32,7 +32,7 @@ func (j Job) Validate() error {
 }
 
 type Embedder interface {
-	GenerateEmbeddingContext(ctx context.Context, content string) ([]float64, error)
+	GenerateEmbedding(ctx context.Context, content string) ([]float64, error)
 }
 
 type Worker struct {
@@ -61,7 +61,7 @@ func (w *Worker) Handle(ctx context.Context, payload []byte) error {
 	}
 
 	chatID, _ := uuid.Parse(job.ChatID)
-	vector, err := w.embedder.GenerateEmbeddingContext(ctx, job.Content)
+	vector, err := w.embedder.GenerateEmbedding(ctx, job.Content)
 	if err != nil {
 		return fmt.Errorf("embeddings: generate for chat %s: %w", job.ChatID, err)
 	}

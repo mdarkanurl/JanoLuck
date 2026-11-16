@@ -90,7 +90,7 @@ func (s *Service) CreateSession(ctx context.Context, userIDStr, content string) 
 
 	if s.producer == nil && s.store == nil {
 		if s.titles != nil {
-			generated, genErr := s.titles.GenerateSessionNameContext(ctx, content)
+			generated, genErr := s.titles.GenerateSessionName(ctx, content)
 			if genErr != nil {
 				s.logger.Warn("could not generate session name synchronously", "error", genErr)
 			} else if trimmed := strings.TrimSpace(generated); trimmed != "" {

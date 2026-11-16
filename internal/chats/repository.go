@@ -80,6 +80,55 @@ func (r *Repository) CreateChatWithEvents(ctx context.Context, sessionID, userID
 	return chat, nil
 }
 
+// CreateChats inserts several messages for the same session in one transaction
+// and returns the stored rows in order. No outbox events are written.
+func (r *Repository) CreateChats(ctx context.Context, sessionID, userID uuid.UUID, messages []NewChat) ([]Chat, error) {
+	return r.CreateChatsWithEvents(ctx, sessionID, userID, messages, nil)
+}
+
+// CreateChatsWithEvents inserts several messages for the same session in one
+// transaction. build(i, chat) returns the outbox events for message i and may
+// be nil.
+func (r *Repository) CreateChatsWithEvents(ctx context.Context, sessionID, userID uuid.UUID, messages []NewChat, build func(int, Chat) []outbox.Event) ([]Chat, error) {
+	chats := make([]Chat, 0, len(messages))
+
+	err := r.db.InTx(ctx, func(q *database.Queries) error {
+		store := outbox.NewRepository(q)
+		for i, m := range messages {
+			row, err := q.CreateChat(ctx, database.CreateChatParams{
+				Sessionid: uuid.NullUUID{UUID: sessionID, Valid: true},
+				Userid:    uuid.NullUUID{UUID: userID, Valid: true},
+				Role:      sql.NullString{String: m.Role, Valid: true},
+				Content:   m.Content,
+				Embedding: m.Embedding,
+			})
+			if err != nil {
+				return fmt.Errorf("%w: db CreateChat: %v", ErrInternal, err)
+			}
+
+			chat := newChat(row.ID, row.Sessionid, row.Userid, row.Role, row.Content, row.CreateAt, row.UpdateAt)
+			chats = append(chats, chat)
+
+			if build == nil {
+				continue
+			}
+
+			for _, event := range build(i, chat) {
+				if err := store.Enqueue(ctx, event.Topic, event.Key, event.Payload, event.Headers); err != nil {
+					return fmt.Errorf("%w: %v", ErrInternal, err)
+				}
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return chats, nil
+}
+
 func (r *Repository) ListChatsBySessionID(ctx context.Context, sessionID, userID uuid.UUID, limit, offset int) ([]Chat, error) {
 	rows, err := r.db.ListChatsBySessionID(ctx, database.ListChatsBySessionIDParams{
 		Sessionid: uuid.NullUUID{UUID: sessionID, Valid: true},

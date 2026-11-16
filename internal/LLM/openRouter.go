@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	openrouter "github.com/OpenRouterTeam/go-sdk"
@@ -11,7 +12,12 @@ import (
 )
 
 var newOpenRouterClient = func(apiKey string) *openrouter.OpenRouter {
-	return openrouter.New(openrouter.WithSecurity(apiKey))
+	return openrouter.New(
+		openrouter.WithSecurity(apiKey),
+		// The SDK default client has no timeout; without one a stuck provider
+		// response can hold a request or worker goroutine forever.
+		openrouter.WithClient(&http.Client{Timeout: DefaultRequestTimeout}),
+	)
 }
 
 func NewOpenRouterService(apiKey, modelName, embedModelName string) *LLM {
@@ -19,14 +25,29 @@ func NewOpenRouterService(apiKey, modelName, embedModelName string) *LLM {
 		apiKey:     apiKey,
 		model:      modelName,
 		embedModel: embedModelName,
+		timeout:    DefaultRequestTimeout,
 	}
 }
 
-func (l *LLM) GenerateSessionName(content string) (string, error) {
-	return l.GenerateSessionNameContext(context.Background(), content)
+// requestContext bounds a provider call by the service timeout while keeping
+// the caller's cancellation (request or job context) intact.
+func (l *LLM) requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	timeout := l.timeout
+	if timeout <= 0 {
+		timeout = DefaultRequestTimeout
+	}
+
+	return context.WithTimeout(ctx, timeout)
 }
 
-func (l *LLM) GenerateSessionNameContext(ctx context.Context, content string) (string, error) {
+func (l *LLM) GenerateSessionName(ctx context.Context, content string) (string, error) {
+	ctx, cancel := l.requestContext(ctx)
+	defer cancel()
+
 	client := newOpenRouterClient(l.apiKey)
 
 	res, err := client.Chat.Send(ctx, components.ChatRequest{
@@ -155,8 +176,9 @@ func predictionMessages(content, systemPrompt string) []components.ChatMessages 
 	}
 }
 
-func (l *LLM) GeneratePrediction(content string, previousChats []string, modeName, modePrompt string) (string, error) {
-	ctx := context.Background()
+func (l *LLM) GeneratePrediction(ctx context.Context, content string, previousChats []string, modeName, modePrompt string) (string, error) {
+	ctx, cancel := l.requestContext(ctx)
+	defer cancel()
 
 	client := newOpenRouterClient(l.apiKey)
 
@@ -212,11 +234,10 @@ func formatPreviousChats(previousChats []string) string {
 	return strings.TrimSpace(sb.String())
 }
 
-func (l *LLM) GenerateEmbedding(content string) ([]float64, error) {
-	return l.GenerateEmbeddingContext(context.Background(), content)
-}
+func (l *LLM) GenerateEmbedding(ctx context.Context, content string) ([]float64, error) {
+	ctx, cancel := l.requestContext(ctx)
+	defer cancel()
 
-func (l *LLM) GenerateEmbeddingContext(ctx context.Context, content string) ([]float64, error) {
 	client := newOpenRouterClient(l.apiKey)
 
 	dimensions := int64(1536)
@@ -257,7 +278,10 @@ func (l *LLM) GenerateEmbeddingContext(ctx context.Context, content string) ([]f
 	return nil, fmt.Errorf("could not extract embedding from response")
 }
 
-func (l *LLM) ModerateContentContext(ctx context.Context, content string) (bool, string, error) {
+func (l *LLM) ModerateContent(ctx context.Context, content string) (bool, string, error) {
+	ctx, cancel := l.requestContext(ctx)
+	defer cancel()
+
 	client := newOpenRouterClient(l.apiKey)
 
 	systemPrompt := `You are a content safety classifier for a fortune-telling chat app.
@@ -310,7 +334,10 @@ Reply with exactly one line: either "ALLOW" or "BLOCK: <short reason>".`
 	}
 }
 
-func (l *LLM) SummarizeSessionContext(ctx context.Context, contents []string) (string, error) {
+func (l *LLM) SummarizeSession(ctx context.Context, contents []string) (string, error) {
+	ctx, cancel := l.requestContext(ctx)
+	defer cancel()
+
 	client := newOpenRouterClient(l.apiKey)
 
 	systemPrompt := `You summarize a fortune-telling conversation.

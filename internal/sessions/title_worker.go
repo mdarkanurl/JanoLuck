@@ -20,7 +20,7 @@ const (
 var ErrInvalidTitleJob = errors.New("invalid session title job")
 
 type TitleGenerator interface {
-	GenerateSessionNameContext(ctx context.Context, content string) (string, error)
+	GenerateSessionName(ctx context.Context, content string) (string, error)
 }
 
 type TitleWorker struct {
@@ -88,7 +88,7 @@ func (w *TitleWorker) Handle(ctx context.Context, payload []byte, publishedAt ti
 		return fmt.Errorf("%w: invalid user id: %v", ErrInvalidTitleJob, err)
 	}
 
-	name, err := w.llm.GenerateSessionNameContext(ctx, job.Content)
+	name, err := w.llm.GenerateSessionName(ctx, job.Content)
 	if err != nil {
 		return fmt.Errorf("generate session name: %w", err)
 	}

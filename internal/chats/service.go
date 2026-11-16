@@ -34,8 +34,8 @@ type Publisher interface {
 
 // LanguageModel is the part of the LLM service the chat flow depends on.
 type LanguageModel interface {
-	GenerateEmbedding(content string) ([]float64, error)
-	GeneratePrediction(content string, previousChats []string, modeName, modePrompt string) (string, error)
+	GenerateEmbedding(ctx context.Context, content string) ([]float64, error)
+	GeneratePrediction(ctx context.Context, content string, previousChats []string, modeName, modePrompt string) (string, error)
 	GeneratePredictionStream(ctx context.Context, content string, previousChats []string, modeName, modePrompt string, onChunk func(string) error) (string, error)
 }
 
@@ -104,12 +104,13 @@ func NewService(repo *Repository, model LanguageModel, opts ...ServiceOption) *S
 	return s
 }
 
-// chatPrep holds everything needed to answer a chat message once the incoming
-// message has been stored.
+// chatPrep holds the validated request and the context needed to answer it.
+// Nothing is written to the database until the prediction has been generated.
 type chatPrep struct {
 	userID        uuid.UUID
 	sessionID     uuid.UUID
 	content       string
+	embedding     string
 	modeName      string
 	modePrompt    string
 	previousChats []string
@@ -121,12 +122,19 @@ func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr uuid.U
 		return Chat{}, err
 	}
 
-	prediction, err := s.llm.GeneratePrediction(prep.content, prep.previousChats, prep.modeName, prep.modePrompt)
+	prediction, err := s.llm.GeneratePrediction(ctx, prep.content, prep.previousChats, prep.modeName, prep.modePrompt)
 	if err != nil {
 		return Chat{}, fmt.Errorf("%w: llm GeneratePrediction: %v", ErrInternal, err)
 	}
 
-	return s.storePrediction(ctx, prep, prediction)
+	reply, err := s.storeExchange(ctx, prep, prediction)
+	if err != nil {
+		return Chat{}, err
+	}
+
+	s.enqueueSummary(ctx, prep.sessionID, prep.userID)
+
+	return reply, nil
 }
 
 func (s *Service) CreateChatStream(ctx context.Context, userID, sessionID uuid.UUID, content string, emitter StreamEmitter) (Chat, error) {
@@ -150,10 +158,12 @@ func (s *Service) CreateChatStream(ctx context.Context, userID, sessionID uuid.U
 		return Chat{}, fmt.Errorf("%w: llm GeneratePrediction: %v", ErrInternal, err)
 	}
 
-	reply, err := s.storePrediction(ctx, prep, prediction)
+	reply, err := s.storeExchange(ctx, prep, prediction)
 	if err != nil {
 		return Chat{}, err
 	}
+
+	s.enqueueSummary(ctx, prep.sessionID, prep.userID)
 
 	if err := emitter.Done(reply); err != nil {
 		return Chat{}, fmt.Errorf("%w: finish stream: %v", ErrInternal, err)
@@ -190,40 +200,15 @@ func (s *Service) prepareChat(ctx context.Context, userID, sessionID uuid.UUID, 
 		modePrompt = activeMode.Prompt
 	}
 
-	embedding, err := s.llm.GenerateEmbedding(content)
+	embedding, err := s.llm.GenerateEmbedding(ctx, content)
 	if err != nil {
 		return chatPrep{}, fmt.Errorf("%w: llm GenerateEmbedding: %v", ErrInternal, err)
 	}
+	embeddingString := vectorString(embedding)
 
-	currentChat, err := s.createChat(ctx, sessionID, userID, RoleUser, content, vectorString(embedding), func(chat Chat) []outbox.Event {
-		return []outbox.Event{
-			{
-				Topic: moderation.Topic,
-				Key:   chat.ID.String(),
-				Payload: moderation.Job{
-					Kind:    moderation.KindChat,
-					ID:      chat.ID.String(),
-					UserID:  userID.String(),
-					Content: content,
-				},
-			},
-			{
-				Topic: analytics.Topic,
-				Key:   userID.String(),
-				Payload: analytics.Event{
-					Type:      "chat.user_created",
-					UserID:    userID.String(),
-					SessionID: sessionID.String(),
-					ChatID:    chat.ID.String(),
-				},
-			},
-		}
-	})
-	if err != nil {
-		return chatPrep{}, err
-	}
-
-	previousChats, err := s.repo.ListSimilarChatsBySessionID(ctx, sessionID, currentChat.ID, vectorString(embedding), similarChatsLimit)
+	// The user message is not stored yet, so there is no row to exclude from
+	// the similarity search.
+	previousChats, err := s.repo.ListSimilarChatsBySessionID(ctx, sessionID, uuid.Nil, embeddingString, similarChatsLimit)
 	if err != nil {
 		return chatPrep{}, err
 	}
@@ -240,20 +225,62 @@ func (s *Service) prepareChat(ctx context.Context, userID, sessionID uuid.UUID, 
 		userID:        userID,
 		sessionID:     sessionID,
 		content:       content,
+		embedding:     embeddingString,
 		modeName:      modeName,
 		modePrompt:    modePrompt,
 		previousChats: previousChats,
 	}, nil
 }
 
-// storePrediction embeds the prediction and stores it as the reply.
-func (s *Service) storePrediction(ctx context.Context, prep chatPrep, prediction string) (Chat, error) {
-	predictionEmbedding, err := s.llm.GenerateEmbedding(prediction)
+// storeExchange embeds the prediction and stores the user message and its reply
+// in one transaction. If either insert fails, neither message is kept, so a
+// failed model call can never leave an orphaned user message behind.
+func (s *Service) storeExchange(ctx context.Context, prep chatPrep, prediction string) (Chat, error) {
+	predictionEmbedding, err := s.llm.GenerateEmbedding(ctx, prediction)
 	if err != nil {
 		return Chat{}, fmt.Errorf("%w: llm GenerateEmbedding: %v", ErrInternal, err)
 	}
 
-	reply, err := s.createChat(ctx, prep.sessionID, prep.userID, RoleSystem, prediction, vectorString(predictionEmbedding), func(chat Chat) []outbox.Event {
+	messages := []NewChat{
+		{Role: RoleUser, Content: prep.content, Embedding: prep.embedding},
+		{Role: RoleSystem, Content: prediction, Embedding: vectorString(predictionEmbedding)},
+	}
+
+	chats, err := s.createChats(ctx, prep, messages)
+	if err != nil {
+		return Chat{}, err
+	}
+
+	return chats[1], nil
+}
+
+func (s *Service) createChats(ctx context.Context, prep chatPrep, messages []NewChat) ([]Chat, error) {
+	build := func(index int, chat Chat) []outbox.Event {
+		if index == 0 {
+			return []outbox.Event{
+				{
+					Topic: moderation.Topic,
+					Key:   chat.ID.String(),
+					Payload: moderation.Job{
+						Kind:    moderation.KindChat,
+						ID:      chat.ID.String(),
+						UserID:  prep.userID.String(),
+						Content: prep.content,
+					},
+				},
+				{
+					Topic: analytics.Topic,
+					Key:   prep.userID.String(),
+					Payload: analytics.Event{
+						Type:      "chat.user_created",
+						UserID:    prep.userID.String(),
+						SessionID: prep.sessionID.String(),
+						ChatID:    chat.ID.String(),
+					},
+				},
+			}
+		}
+
 		return []outbox.Event{
 			{
 				Topic: analytics.Topic,
@@ -266,31 +293,24 @@ func (s *Service) storePrediction(ctx context.Context, prep chatPrep, prediction
 				},
 			},
 		}
-	})
-	if err != nil {
-		return Chat{}, err
 	}
 
-	s.enqueueSummary(ctx, prep.sessionID, prep.userID)
-
-	return reply, nil
-}
-
-func (s *Service) createChat(ctx context.Context, sessionID, userID uuid.UUID, role, content, embedding string, build func(Chat) []outbox.Event) (Chat, error) {
 	if s.store == nil {
-		chat, err := s.repo.CreateChat(ctx, sessionID, userID, role, content, embedding)
+		chats, err := s.repo.CreateChats(ctx, prep.sessionID, prep.userID, messages)
 		if err != nil {
-			return Chat{}, err
+			return nil, err
 		}
 
-		for _, event := range build(chat) {
-			s.publishAsync(ctx, event.Topic, event.Key, event.Payload, event.Headers)
+		for i, chat := range chats {
+			for _, event := range build(i, chat) {
+				s.publishAsync(ctx, event.Topic, event.Key, event.Payload, event.Headers)
+			}
 		}
 
-		return chat, nil
+		return chats, nil
 	}
 
-	return s.repo.CreateChatWithEvents(ctx, sessionID, userID, role, content, embedding, build)
+	return s.repo.CreateChatsWithEvents(ctx, prep.sessionID, prep.userID, messages, build)
 }
 
 func (s *Service) enqueueSummary(ctx context.Context, sessionID, userID uuid.UUID) {

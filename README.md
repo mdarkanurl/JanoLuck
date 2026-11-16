@@ -333,6 +333,26 @@ Built-in modes can be selected but not edited or deleted. Custom modes open a
 small form: `tab` moves between the name and instructions, `ctrl+j` inserts a
 newline in the instructions, `enter` saves and `esc` cancels.
 
+### Mouse
+
+Every interactive element also works with the mouse, alongside the keyboard:
+
+- Click a text field to focus it; in the login, profile and password screens the
+  caret moves to the point you clicked.
+- Click a footer button (`[enter] save`, `[esc] back`, `[ctrl+d] delete`, ...) to
+  run that action.
+- Click a conversation, mode, or command suggestion to select and open it right
+  away.
+- Click the `[y]` / `[n]` buttons in a confirmation, or `[esc] close` in the help
+  panel and the error screen's `[r] retry`.
+- The mouse wheel scrolls the conversation and help, and moves the selection in
+  the conversation and mode pickers.
+
+Hovered elements are highlighted, and the pointer changes shape where the
+terminal supports it (a hand over buttons and rows, a text caret over inputs).
+Terminals without OSC 22 pointer-shape support simply ignore the request and
+keep the normal pointer; hover highlighting still works everywhere.
+
 The conversation picker and chat history load every page from the API, so old
 conversations and long threads stay reachable.
 

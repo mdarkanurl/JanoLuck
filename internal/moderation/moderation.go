@@ -44,7 +44,7 @@ func (j Job) Validate() error {
 }
 
 type Moderator interface {
-	ModerateContentContext(ctx context.Context, content string) (bool, string, error)
+	ModerateContent(ctx context.Context, content string) (bool, string, error)
 }
 
 type Store interface {
@@ -77,7 +77,7 @@ func (w *Worker) Handle(ctx context.Context, payload []byte) error {
 		return errors.New("moderation: worker is not configured")
 	}
 
-	allowed, reason, err := w.moderator.ModerateContentContext(ctx, job.Content)
+	allowed, reason, err := w.moderator.ModerateContent(ctx, job.Content)
 	if err != nil {
 		return fmt.Errorf("moderation: classify %s %s: %w", job.Kind, job.ID, err)
 	}

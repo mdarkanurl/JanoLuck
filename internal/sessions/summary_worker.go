@@ -10,7 +10,7 @@ import (
 )
 
 type SummaryGenerator interface {
-	SummarizeSessionContext(ctx context.Context, contents []string) (string, error)
+	SummarizeSession(ctx context.Context, contents []string) (string, error)
 }
 
 type SummaryWorker struct {
@@ -76,7 +76,7 @@ func (w *SummaryWorker) Handle(ctx context.Context, payload []byte) error {
 		return err
 	}
 
-	summary, err := w.llm.SummarizeSessionContext(ctx, contents)
+	summary, err := w.llm.SummarizeSession(ctx, contents)
 	if err != nil {
 		return fmt.Errorf("summarize session: %w", err)
 	}

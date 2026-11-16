@@ -16,7 +16,7 @@ type fakeModerator struct {
 	content string
 }
 
-func (f *fakeModerator) ModerateContentContext(_ context.Context, content string) (bool, string, error) {
+func (f *fakeModerator) ModerateContent(_ context.Context, content string) (bool, string, error) {
 	f.content = content
 	return f.allowed, f.reason, f.err
 }

@@ -17,7 +17,7 @@ type fakeEmbedder struct {
 	content string
 }
 
-func (f *fakeEmbedder) GenerateEmbeddingContext(_ context.Context, content string) ([]float64, error) {
+func (f *fakeEmbedder) GenerateEmbedding(_ context.Context, content string) ([]float64, error) {
 	f.content = content
 	return f.vector, f.err
 }

@@ -21,7 +21,7 @@ type fakeGenerator struct {
 	content string
 }
 
-func (f *fakeGenerator) GenerateSessionNameContext(_ context.Context, content string) (string, error) {
+func (f *fakeGenerator) GenerateSessionName(_ context.Context, content string) (string, error) {
 	f.calls++
 	f.content = content
 	return f.name, f.err
