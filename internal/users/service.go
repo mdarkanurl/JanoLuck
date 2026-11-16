@@ -72,7 +72,7 @@ func NewService(repo *Repository, opts ...ServiceOption) *Service {
 	return s
 }
 
-func (s *Service) CreateProfile(ctx context.Context, userIDStr, name, qOne, qTwo string) (database.CreateProfileRow, error) {
+func (s *Service) CreateProfile(ctx context.Context, userIDStr string, answers ...string) (database.CreateProfileRow, error) {
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil || userID == uuid.Nil {
 		return database.CreateProfileRow{}, fmt.Errorf("%w: invalid user id", ErrInvalidInput)
@@ -84,9 +84,9 @@ func (s *Service) CreateProfile(ctx context.Context, userIDStr, name, qOne, qTwo
 		return database.CreateProfileRow{}, err
 	}
 
-	questions := BuildFixedQuestions(qOne, qTwo)
+	questions := BuildFixedQuestions(answers[0], answers[1], answers[2], answers[3], answers[4])
 
-	profile, err := s.repo.CreateProfile(ctx, userID, name, questions)
+	profile, err := s.repo.CreateProfile(ctx, userID, answers[0], questions)
 	if err != nil {
 		return database.CreateProfileRow{}, err
 	}

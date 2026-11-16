@@ -24,9 +24,11 @@ func (h *Handler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = strings.TrimSpace(req.Name)
 	req.QOne = strings.TrimSpace(req.QOne)
 	req.QTwo = strings.TrimSpace(req.QTwo)
+	req.QThree = strings.TrimSpace(req.QThree)
+	req.QFour = strings.TrimSpace(req.QFour)
+	req.QFive = strings.TrimSpace(req.QFive)
 
 	if !httpx.ValidateRequest(req, w) {
 		return
@@ -38,7 +40,15 @@ func (h *Handler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.service.CreateProfile(r.Context(), userID, req.Name, req.QOne, req.QTwo)
+	result, err := h.service.CreateProfile(
+		r.Context(),
+		userID,
+		req.QOne,
+		req.QTwo,
+		req.QThree,
+		req.QFour,
+		req.QFive,
+	)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidInput):

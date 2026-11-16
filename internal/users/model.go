@@ -3,8 +3,11 @@ package users
 import "github.com/mdarkanurl/JanoLuck/internal/httpx"
 
 var FixedQuestions = []string{
-	"Where are you from?",
-	"What do you do for living?",
+	"What is your name?",
+	"Do you want predictions that are short and simple, or long and detailed?",
+	"Do you want to hear the best-case scenario, the worst-case scenario, or both?",
+	"When you get advice, do you prefer clear steps to follow or just ideas to think about?",
+	"Should I be serious or a little playful when I talk to you?",
 }
 
 type Question struct {
@@ -14,9 +17,11 @@ type Question struct {
 }
 
 type CreateProfileRequest struct {
-	Name string `json:"name"  validate:"required,min=1,max=100"`
-	QOne string `json:"qOne"  validate:"required,min=1,max=2000"`
-	QTwo string `json:"qTwo"  validate:"required,min=1,max=2000"`
+	QOne   string `json:"qOne"  validate:"required,min=1,max=2000"`
+	QTwo   string `json:"qTwo"  validate:"required,min=1,max=2000"`
+	QThree string `json:"qThree"  validate:"required,min=1,max=2000"`
+	QFour  string `json:"qFour"  validate:"required,min=1,max=2000"`
+	QFive  string `json:"qFive"  validate:"required,min=1,max=2000"`
 }
 
 type QuestionAnswerUpdate struct {
@@ -40,8 +45,8 @@ type UpdateProfileRequest struct {
 	Questions []QuestionAnswerUpdate `json:"questions,omitempty" validate:"omitempty,dive"`
 }
 
-func BuildFixedQuestions(qOne, qTwo string) []Question {
-	answers := []string{qOne, qTwo}
+func BuildFixedQuestions(qOne, qTwo, qThree, qFour, qFive string) []Question {
+	answers := []string{qOne, qTwo, qThree, qFour, qFive}
 	questions := make([]Question, len(FixedQuestions))
 	for i, q := range FixedQuestions {
 		questions[i] = Question{Index: i, Question: q, Answer: answers[i]}

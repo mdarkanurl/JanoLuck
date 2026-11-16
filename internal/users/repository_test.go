@@ -56,7 +56,7 @@ func TestRepositoryCreateProfile(t *testing.T) {
 			},
 		})
 
-		profile, err := repo.CreateProfile(context.Background(), profileUserID, "Ada", BuildFixedQuestions("Earth", "Engineer"))
+		profile, err := repo.CreateProfile(context.Background(), profileUserID, "Ada", BuildFixedQuestions("Earth", "Engineer", "Both", "Clear steps", "Playful"))
 		if err != nil {
 			t.Fatalf("CreateProfile() error = %v", err)
 		}
@@ -147,7 +147,7 @@ func TestRepositoryUpdateProfile(t *testing.T) {
 			},
 		})
 
-		profile, err := repo.UpdateProfile(context.Background(), profileUserID, "Grace", BuildFixedQuestions("Earth", "Engineer"))
+		profile, err := repo.UpdateProfile(context.Background(), profileUserID, "Grace", BuildFixedQuestions("Earth", "Engineer", "Both", "Clear steps", "Playful"))
 		if err != nil {
 			t.Fatalf("UpdateProfile() error = %v", err)
 		}
