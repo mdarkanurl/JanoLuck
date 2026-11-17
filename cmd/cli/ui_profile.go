@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mdarkanurl/JanoLuck/internal/users"
 )
 
 type profileModel struct {
@@ -17,9 +18,11 @@ type profileModel struct {
 	width  int
 	height int
 
-	name textinput.Model
-	qOne textinput.Model
-	qTwo textinput.Model
+	qOne   textinput.Model
+	qTwo   textinput.Model
+	qThree textinput.Model
+	qFour  textinput.Model
+	qFive  textinput.Model
 
 	existing bool
 
@@ -33,31 +36,36 @@ type profileModel struct {
 	spinner spinner.Model
 }
 
-const (
-	questionOne = "Where are you from?"
-	questionTwo = "What do you do for living?"
-)
-
 type profileResultMsg struct {
 	profile profileData
 	err     error
 }
 
 func newProfileModel(c *client, me meData, profile *profileData, width, height int) profileModel {
-	name := textinput.New()
-	name.Placeholder = "What should Jano call you?"
-	name.CharLimit = 120
-	name.Prompt = "› "
-
 	qOne := textinput.New()
-	qOne.Placeholder = "A town, a city, a whole country..."
-	qOne.CharLimit = 500
+	qOne.Placeholder = "What should Jano call you?"
+	qOne.CharLimit = 128
 	qOne.Prompt = "› "
 
 	qTwo := textinput.New()
-	qTwo.Placeholder = "Student, engineer, dreamer..."
+	qTwo.Placeholder = "short, simple, long..."
 	qTwo.CharLimit = 500
 	qTwo.Prompt = "› "
+
+	qThree := textinput.New()
+	qThree.Placeholder = "best-case, worst-case, both..."
+	qThree.CharLimit = 500
+	qThree.Prompt = "› "
+
+	qFour := textinput.New()
+	qFour.Placeholder = "I want..."
+	qFour.CharLimit = 500
+	qFour.Prompt = "› "
+
+	qFive := textinput.New()
+	qFive.Placeholder = "You should be..."
+	qFive.CharLimit = 500
+	qFive.Prompt = "› "
 
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
@@ -66,9 +74,11 @@ func newProfileModel(c *client, me meData, profile *profileData, width, height i
 	model := profileModel{
 		client:  c,
 		me:      me,
-		name:    name,
 		qOne:    qOne,
 		qTwo:    qTwo,
+		qThree:  qThree,
+		qFour:   qFour,
+		qFive:   qFive,
 		width:   width,
 		height:  height,
 		spinner: spin,
@@ -76,9 +86,6 @@ func newProfileModel(c *client, me meData, profile *profileData, width, height i
 
 	if profile != nil && profile.ID != "" {
 		model.existing = true
-		model.name.SetValue(profile.Name)
-		model.name.CursorEnd()
-
 		for _, question := range profile.Questions {
 			switch question.Index {
 			case 0:
@@ -87,6 +94,15 @@ func newProfileModel(c *client, me meData, profile *profileData, width, height i
 			case 1:
 				model.qTwo.SetValue(question.Answer)
 				model.qTwo.CursorEnd()
+			case 2:
+				model.qThree.SetValue(question.Answer)
+				model.qThree.CursorEnd()
+			case 3:
+				model.qFour.SetValue(question.Answer)
+				model.qFour.CursorEnd()
+			case 4:
+				model.qFive.SetValue(question.Answer)
+				model.qFive.CursorEnd()
 			}
 		}
 	}
@@ -109,13 +125,15 @@ func (m *profileModel) setSize(width, height int) {
 	inner := cardWidth - 2
 	inputWidth := max(12, inner-6)
 
-	m.name.Width = inputWidth
 	m.qOne.Width = inputWidth
 	m.qTwo.Width = inputWidth
+	m.qThree.Width = inputWidth
+	m.qFour.Width = inputWidth
+	m.qFive.Width = inputWidth
 }
 
 func (m *profileModel) fields() []*textinput.Model {
-	return []*textinput.Model{&m.name, &m.qOne, &m.qTwo}
+	return []*textinput.Model{&m.qOne, &m.qTwo, &m.qThree, &m.qFour, &m.qFive}
 }
 
 func (m *profileModel) focusField(index int) tea.Cmd {
@@ -184,19 +202,16 @@ func (m profileModel) save() (profileModel, tea.Cmd) {
 
 	m.err = ""
 
-	name := strings.TrimSpace(m.name.Value())
 	qOne := strings.TrimSpace(m.qOne.Value())
 	qTwo := strings.TrimSpace(m.qTwo.Value())
-
-	if name == "" {
-		m.err = "Tell Jano your name."
-		return m, nil
-	}
+	qThree := strings.TrimSpace(m.qThree.Value())
+	qFour := strings.TrimSpace(m.qFour.Value())
+	qFive := strings.TrimSpace(m.qFive.Value())
 
 	m.saving = true
 	existing := m.existing
 
-	return m, tea.Batch(saveProfileCmd(m.client, existing, name, qOne, qTwo), m.spinner.Tick)
+	return m, tea.Batch(saveProfileCmd(m.client, existing, qOne, qTwo, qThree, qFour, qFive), m.spinner.Tick)
 }
 
 func (m profileModel) View() string {
@@ -238,12 +253,17 @@ func (m profileModel) profileLayout() (string, clickMap) {
 	}
 	b.write("\n")
 
-	field(0, "Name", m.name, m.focus == 0)
+	fields := m.fields()
+	for i, question := range users.FixedQuestions {
+		if i >= len(fields) {
+			break
+		}
+		if i > 0 {
+			b.write("\n")
+		}
+		field(i, question, *fields[i], m.focus == i)
+	}
 	b.write("\n")
-	field(1, questionOne, m.qOne, m.focus == 1)
-	b.write("\n")
-	field(2, questionTwo, m.qTwo, m.focus == 2)
-	b.write("\n\n")
 
 	if m.err != "" {
 		b.write(dangerStyle.Render(wrapText(m.err, inner)) + "\n")
@@ -319,20 +339,22 @@ func (m profileModel) renderField(label string, input textinput.Model, focused b
 	return labelStyle.Render(truncate(label, width)) + "\n" + fieldBorder(focused, width).Render(input.View())
 }
 
-func saveProfileCmd(c *client, existing bool, name, qOne, qTwo string) tea.Cmd {
+func saveProfileCmd(c *client, existing bool, qOne, qTwo, qThree, qFour, qFive string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
 		if !existing {
-			profile, err := c.createProfile(ctx, name, qOne, qTwo)
+			profile, err := c.createProfile(ctx, qOne, qTwo, qThree, qFour, qFive)
 			return profileResultMsg{profile: profile, err: err}
 		}
 
 		req := updateProfileRequest{
-			Name: &name,
 			Questions: []questionAnswerUpdate{
 				{Index: 0, Answer: qOne},
 				{Index: 1, Answer: qTwo},
+				{Index: 2, Answer: qThree},
+				{Index: 3, Answer: qFour},
+				{Index: 4, Answer: qFive},
 			},
 		}
 		profile, err := c.updateProfile(ctx, req)

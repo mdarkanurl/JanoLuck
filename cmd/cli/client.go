@@ -538,11 +538,13 @@ func (c *client) getProfile(ctx context.Context) (profileData, error) {
 	return resp.Data, nil
 }
 
-func (c *client) createProfile(ctx context.Context, name, qOne, qTwo string) (profileData, error) {
+func (c *client) createProfile(ctx context.Context, qOne, qTwo, qThree, qFour, qFive string) (profileData, error) {
 	raw, err := c.do(ctx, http.MethodPost, "/profiles", map[string]string{
-		"name": name,
-		"qOne": qOne,
-		"qTwo": qTwo,
+		"qOne":   qOne,
+		"qTwo":   qTwo,
+		"qThree": qThree,
+		"qFour":  qFour,
+		"qFive":  qFive,
 	}, true)
 	if err != nil {
 		return profileData{}, err

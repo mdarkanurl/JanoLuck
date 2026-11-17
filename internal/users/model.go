@@ -4,10 +4,10 @@ import "github.com/mdarkanurl/JanoLuck/internal/httpx"
 
 var FixedQuestions = []string{
 	"What is your name?",
-	"Do you want predictions that are short and simple, or long and detailed?",
-	"Do you want to hear the best-case scenario, the worst-case scenario, or both?",
-	"When you get advice, do you prefer clear steps to follow or just ideas to think about?",
-	"Should I be serious or a little playful when I talk to you?",
+	"Do you prefer short predictions ro detailed ones?",
+	"Would you prefer the best-case, worst-case, or both?",
+	"Do you prefer clear or general advice to follow?",
+	"Would you prefer a serious tone or a slightly playful one?",
 }
 
 type Question struct {
