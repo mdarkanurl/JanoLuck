@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mdarkanurl/JanoLuck/internal/LLM"
 	"github.com/mdarkanurl/JanoLuck/internal/analytics"
 	"github.com/mdarkanurl/JanoLuck/internal/embeddings"
 	"github.com/mdarkanurl/JanoLuck/internal/httpx"
 	"github.com/mdarkanurl/JanoLuck/internal/moderation"
 	"github.com/mdarkanurl/JanoLuck/internal/outbox"
 	"github.com/mdarkanurl/JanoLuck/internal/sessions"
+	"github.com/mdarkanurl/JanoLuck/internal/users"
 )
 
 var (
@@ -36,8 +38,13 @@ type Publisher interface {
 // LanguageModel is the part of the LLM service the chat flow depends on.
 type LanguageModel interface {
 	GenerateEmbedding(ctx context.Context, content string) ([]float64, error)
-	GeneratePrediction(ctx context.Context, content string, previousChats []string, modeName, modePrompt string) (string, error)
-	GeneratePredictionStream(ctx context.Context, content string, previousChats []string, modeName, modePrompt string, onChunk func(string) error) (string, error)
+	GeneratePrediction(ctx context.Context, content string, previousChats []string, profile *llm.Profile, modeName, modePrompt string) (string, error)
+	GeneratePredictionStream(ctx context.Context, content string, previousChats []string, profile *llm.Profile, modeName, modePrompt string, onChunk func(string) error) (string, error)
+}
+
+// ProfileProvider loads the profile context a prediction can be tailored to.
+type ProfileProvider interface {
+	GetProfileData(ctx context.Context, userIDStr string) (users.ProfileData, error)
 }
 
 // StreamEmitter receives the events of a streamed prediction. Start is called
@@ -52,12 +59,21 @@ type StreamEmitter interface {
 type Service struct {
 	repo     *Repository
 	llm      LanguageModel
+	profiles ProfileProvider
 	producer Publisher
 	store    *outbox.Repository
 	logger   *slog.Logger
 }
 
 type ServiceOption func(*Service)
+
+func WithProfileProvider(provider ProfileProvider) ServiceOption {
+	return func(s *Service) {
+		if provider != nil {
+			s.profiles = provider
+		}
+	}
+}
 
 func WithProducer(producer Publisher) ServiceOption {
 	return func(s *Service) {
@@ -114,6 +130,7 @@ type chatPrep struct {
 	embedding     string
 	modeName      string
 	modePrompt    string
+	profile       *llm.Profile
 	previousChats []string
 }
 
@@ -123,7 +140,7 @@ func (s *Service) CreateChat(ctx context.Context, userIDStr, sessionIDStr uuid.U
 		return Chat{}, err
 	}
 
-	prediction, err := s.llm.GeneratePrediction(ctx, prep.content, prep.previousChats, prep.modeName, prep.modePrompt)
+	prediction, err := s.llm.GeneratePrediction(ctx, prep.content, prep.previousChats, prep.profile, prep.modeName, prep.modePrompt)
 	if err != nil {
 		return Chat{}, fmt.Errorf("%w: llm GeneratePrediction: %v", ErrInternal, err)
 	}
@@ -152,7 +169,7 @@ func (s *Service) CreateChatStream(ctx context.Context, userID, sessionID uuid.U
 		return Chat{}, fmt.Errorf("%w: start stream: %v", ErrInternal, err)
 	}
 
-	prediction, err := s.llm.GeneratePredictionStream(ctx, prep.content, prep.previousChats, prep.modeName, prep.modePrompt, func(chunk string) error {
+	prediction, err := s.llm.GeneratePredictionStream(ctx, prep.content, prep.previousChats, prep.profile, prep.modeName, prep.modePrompt, func(chunk string) error {
 		return emitter.Delta(chunk)
 	})
 	if err != nil {
@@ -201,6 +218,8 @@ func (s *Service) prepareChat(ctx context.Context, userID, sessionID uuid.UUID, 
 		modePrompt = activeMode.Prompt
 	}
 
+	profile := s.loadProfile(ctx, userID)
+
 	embedding, err := s.llm.GenerateEmbedding(ctx, content)
 	if err != nil {
 		return chatPrep{}, fmt.Errorf("%w: llm GenerateEmbedding: %v", ErrInternal, err)
@@ -227,8 +246,48 @@ func (s *Service) prepareChat(ctx context.Context, userID, sessionID uuid.UUID, 
 		embedding:     embeddingString,
 		modeName:      modeName,
 		modePrompt:    modePrompt,
+		profile:       profile,
 		previousChats: previousChats,
 	}, nil
+}
+
+// loadProfile fetches the user's profile context for the prediction. A missing
+// profile is normal, and any lookup failure is logged rather than blocking the
+// chat so predictions keep working when profile data is unavailable.
+func (s *Service) loadProfile(ctx context.Context, userID uuid.UUID) *llm.Profile {
+	if s.profiles == nil {
+		return nil
+	}
+
+	profile, err := s.profiles.GetProfileData(ctx, userID.String())
+	if err != nil {
+		if !errors.Is(err, users.ErrNotFound) {
+			s.logger.Warn("could not load profile for prediction", "user_id", userID, "error", err)
+		}
+		return nil
+	}
+
+	return profileForLLM(profile)
+}
+
+func profileForLLM(profile users.ProfileData) *llm.Profile {
+	name := strings.TrimSpace(profile.Name)
+
+	questions := make([]llm.ProfileQuestion, 0, len(profile.Questions))
+	for _, question := range profile.Questions {
+		text := strings.TrimSpace(question.Question)
+		answer := strings.TrimSpace(question.Answer)
+		if text == "" || answer == "" {
+			continue
+		}
+		questions = append(questions, llm.ProfileQuestion{Question: text, Answer: answer})
+	}
+
+	if name == "" && len(questions) == 0 {
+		return nil
+	}
+
+	return &llm.Profile{Name: name, Questions: questions}
 }
 
 func (s *Service) storeExchange(ctx context.Context, prep chatPrep, prediction string) (Chat, error) {

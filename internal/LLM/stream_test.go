@@ -10,7 +10,6 @@ import (
 	"testing"
 )
 
-// useStreamServer points the streaming client at a local test server.
 func useStreamServer(t *testing.T, handler http.HandlerFunc) {
 	t.Helper()
 
@@ -67,11 +66,17 @@ func TestGeneratePredictionStream(t *testing.T) {
 
 	svc := NewOpenRouterService("test-key", "test-model", "embed-model")
 
+	profile := &Profile{
+		Name:      "Ada",
+		Questions: []ProfileQuestion{{Question: "Should I be serious or a little playful when I talk to you?", Answer: "playful"}},
+	}
+
 	var deltas []string
 	prediction, err := svc.GeneratePredictionStream(
 		context.Background(),
 		"What next?",
 		[]string{"first message"},
+		profile,
 		"Motivation",
 		"Be uplifting.",
 		func(chunk string) error {
@@ -105,6 +110,12 @@ func TestGeneratePredictionStream(t *testing.T) {
 	if !strings.Contains(requestBody, "first message") {
 		t.Error("request body missing the previous chat context")
 	}
+	if !strings.Contains(requestBody, "Name: Ada") || !strings.Contains(requestBody, "playful") {
+		t.Error("request body missing the user's profile")
+	}
+	if !strings.Contains(requestBody, "Should I be serious or a little playful when I talk to you?") {
+		t.Error("request body missing the profile question")
+	}
 }
 
 func TestGeneratePredictionStreamIgnoresComments(t *testing.T) {
@@ -120,7 +131,7 @@ func TestGeneratePredictionStreamIgnoresComments(t *testing.T) {
 
 	svc := NewOpenRouterService("test-key", "test-model", "embed-model")
 
-	prediction, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, "", "", nil)
+	prediction, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, nil, "", "", nil)
 	if err != nil {
 		t.Fatalf("GeneratePredictionStream() error = %v", err)
 	}
@@ -139,7 +150,7 @@ func TestGeneratePredictionStreamNestedChunk(t *testing.T) {
 
 	svc := NewOpenRouterService("test-key", "test-model", "embed-model")
 
-	prediction, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, "", "", nil)
+	prediction, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, nil, "", "", nil)
 	if err != nil {
 		t.Fatalf("GeneratePredictionStream() error = %v", err)
 	}
@@ -158,7 +169,7 @@ func TestGeneratePredictionStreamMidStreamError(t *testing.T) {
 
 	svc := NewOpenRouterService("test-key", "test-model", "embed-model")
 
-	_, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, "", "", nil)
+	_, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, nil, "", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "Provider disconnected unexpectedly") {
 		t.Errorf("error = %v, want the provider error", err)
 	}
@@ -173,7 +184,7 @@ func TestGeneratePredictionStreamHTTPError(t *testing.T) {
 
 	svc := NewOpenRouterService("test-key", "test-model", "embed-model")
 
-	_, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, "", "", nil)
+	_, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, nil, "", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "Invalid model specified") {
 		t.Errorf("error = %v, want the openrouter error message", err)
 	}
@@ -186,7 +197,7 @@ func TestGeneratePredictionStreamEmptyResponse(t *testing.T) {
 
 	svc := NewOpenRouterService("test-key", "test-model", "embed-model")
 
-	_, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, "", "", nil)
+	_, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, nil, "", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "empty response from openrouter") {
 		t.Errorf("error = %v, want empty response from openrouter", err)
 	}
@@ -205,7 +216,7 @@ func TestGeneratePredictionStreamCallbackError(t *testing.T) {
 
 	boom := errors.New("client gone")
 
-	_, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, "", "", func(string) error {
+	_, err := svc.GeneratePredictionStream(context.Background(), "hello", nil, nil, "", "", func(string) error {
 		return boom
 	})
 	if !errors.Is(err, boom) {
@@ -223,7 +234,7 @@ func TestGeneratePredictionStreamRespectsContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := svc.GeneratePredictionStream(ctx, "hello", nil, "", "", nil)
+	_, err := svc.GeneratePredictionStream(ctx, "hello", nil, nil, "", "", nil)
 	if err == nil {
 		t.Error("expected an error for a cancelled context")
 	}

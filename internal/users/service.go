@@ -108,6 +108,25 @@ func (s *Service) GetProfile(ctx context.Context, userIDStr string) (database.Ge
 	return s.repo.GetProfileByUserID(ctx, userID)
 }
 
+func (s *Service) GetProfileData(ctx context.Context, userIDStr string) (ProfileData, error) {
+	profile, err := s.GetProfile(ctx, userIDStr)
+	if err != nil {
+		return ProfileData{}, err
+	}
+
+	var questions []Question
+	if err := json.Unmarshal(profile.Questions, &questions); err != nil {
+		return ProfileData{}, fmt.Errorf("%w: corrupt profile questions: %v", ErrInternal, err)
+	}
+
+	return ProfileData{
+		ID:        profile.ID.String(),
+		Name:      profile.Name,
+		Questions: questions,
+		UserID:    profile.Userid.String(),
+	}, nil
+}
+
 func (s *Service) ProfileExists(ctx context.Context, userIDStr string) (bool, error) {
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil || userID == uuid.Nil {

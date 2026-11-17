@@ -126,7 +126,15 @@ func TestGeneratePrediction(t *testing.T) {
 		_, _ = w.Write([]byte(chatResponse("A bright future awaits")))
 	})
 
-	prediction, err := svc.GeneratePrediction(context.Background(), "What next?", []string{"first message", "second message"}, "Motivation", "Be uplifting.")
+	profile := &Profile{
+		Name: "Ada",
+		Questions: []ProfileQuestion{
+			{Question: "What is your name?", Answer: "Ada"},
+			{Question: "Do you want predictions that are short and simple, or long and detailed?", Answer: "short and simple"},
+		},
+	}
+
+	prediction, err := svc.GeneratePrediction(context.Background(), "What next?", []string{"first message", "second message"}, profile, "Motivation", "Be uplifting.")
 	if err != nil {
 		t.Fatalf("GeneratePrediction() error = %v", err)
 	}
@@ -138,6 +146,18 @@ func TestGeneratePrediction(t *testing.T) {
 	}
 	if !strings.Contains(requestBody, "Motivation") || !strings.Contains(requestBody, "Be uplifting.") {
 		t.Error("request body missing active mode instructions")
+	}
+	if !strings.Contains(requestBody, "Name: Ada") {
+		t.Error("request body missing the user's name")
+	}
+	if !strings.Contains(requestBody, "short and simple") {
+		t.Error("request body missing the user's profile answers")
+	}
+	if !strings.Contains(requestBody, "Do you want predictions that are short and simple, or long and detailed?") {
+		t.Error("request body missing the profile questions")
+	}
+	if !strings.Contains(requestBody, "Do not address the user by name in every prediction") {
+		t.Error("request body missing the name-usage instruction")
 	}
 }
 
@@ -151,7 +171,7 @@ func TestChatMethodsErrorResponses(t *testing.T) {
 	if _, err := svc.GenerateSessionName(context.Background(), "hello"); err == nil {
 		t.Error("GenerateSessionName() expected error")
 	}
-	if _, err := svc.GeneratePrediction(context.Background(), "hello", nil, "", ""); err == nil {
+	if _, err := svc.GeneratePrediction(context.Background(), "hello", nil, nil, "", ""); err == nil {
 		t.Error("GeneratePrediction() expected error")
 	}
 }
@@ -165,7 +185,7 @@ func TestChatMethodsEmptyChoices(t *testing.T) {
 	if _, err := svc.GenerateSessionName(context.Background(), "hello"); err == nil {
 		t.Error("GenerateSessionName() expected error for empty choices")
 	}
-	if _, err := svc.GeneratePrediction(context.Background(), "hello", nil, "", ""); err == nil {
+	if _, err := svc.GeneratePrediction(context.Background(), "hello", nil, nil, "", ""); err == nil {
 		t.Error("GeneratePrediction() expected error for empty choices")
 	}
 }
@@ -239,7 +259,7 @@ func TestGeneratePredictionRespectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := svc.GeneratePrediction(ctx, "hello", nil, "", ""); err == nil {
+	if _, err := svc.GeneratePrediction(ctx, "hello", nil, nil, "", ""); err == nil {
 		t.Fatal("expected an error from a canceled context")
 	}
 }
@@ -253,7 +273,7 @@ func TestGeneratePredictionAppliesTimeout(t *testing.T) {
 	svc.timeout = 20 * time.Millisecond
 
 	start := time.Now()
-	if _, err := svc.GeneratePrediction(context.Background(), "hello", nil, "", ""); err == nil {
+	if _, err := svc.GeneratePrediction(context.Background(), "hello", nil, nil, "", ""); err == nil {
 		t.Fatal("expected a timeout error")
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {

@@ -121,6 +121,7 @@ func New() (*Server, error) {
 	chatsLLM := llm.NewOpenRouterService(cfg.LLM_API_KEY, cfg.LLM_MODEL_NAME, cfg.LLM_EMBED_MODEL_NAME)
 	chatsOpts := []chats.ServiceOption{
 		chats.WithEventStore(outbox.NewRepository(dbQueries)),
+		chats.WithProfileProvider(usersService),
 	}
 	if producer != nil {
 		chatsOpts = append(chatsOpts, chats.WithProducer(producer))

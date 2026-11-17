@@ -11,7 +11,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/mdarkanurl/JanoLuck/internal/LLM"
 	"github.com/mdarkanurl/JanoLuck/internal/testutil"
+	"github.com/mdarkanurl/JanoLuck/internal/users"
 )
 
 // fakeLanguageModel is a stand-in for the LLM service.
@@ -26,6 +28,17 @@ type fakeLanguageModel struct {
 	streamErr      error
 	streamed       bool
 	embedded       []string
+	profile        *llm.Profile
+}
+
+// fakeProfileProvider is a stand-in for the users service profile lookup.
+type fakeProfileProvider struct {
+	profile users.ProfileData
+	err     error
+}
+
+func (f *fakeProfileProvider) GetProfileData(context.Context, string) (users.ProfileData, error) {
+	return f.profile, f.err
 }
 
 func (f *fakeLanguageModel) GenerateEmbedding(ctx context.Context, content string) ([]float64, error) {
@@ -43,7 +56,8 @@ func (f *fakeLanguageModel) GenerateEmbedding(ctx context.Context, content strin
 	return []float64{0.1, 0.2}, nil
 }
 
-func (f *fakeLanguageModel) GeneratePrediction(ctx context.Context, content string, previousChats []string, modeName, modePrompt string) (string, error) {
+func (f *fakeLanguageModel) GeneratePrediction(_ context.Context, _ string, _ []string, profile *llm.Profile, _, _ string) (string, error) {
+	f.profile = profile
 	if f.predictionErr != nil {
 		return "", f.predictionErr
 	}
@@ -51,7 +65,8 @@ func (f *fakeLanguageModel) GeneratePrediction(ctx context.Context, content stri
 	return f.prediction, nil
 }
 
-func (f *fakeLanguageModel) GeneratePredictionStream(_ context.Context, _ string, _ []string, _, _ string, onChunk func(string) error) (string, error) {
+func (f *fakeLanguageModel) GeneratePredictionStream(_ context.Context, _ string, _ []string, profile *llm.Profile, _, _ string, onChunk func(string) error) (string, error) {
+	f.profile = profile
 	f.streamed = true
 
 	if f.streamErr != nil {
@@ -127,7 +142,14 @@ func chatFlowDB() *testutil.DB {
 
 func TestServiceCreateChatStream(t *testing.T) {
 	model := &fakeLanguageModel{deltas: []string{"A bright ", "future awaits"}}
-	svc := NewService(testRepository(t, chatFlowDB()), model)
+	profiles := &fakeProfileProvider{profile: users.ProfileData{
+		Name: "Ada",
+		Questions: []users.Question{
+			{Index: 0, Question: "What is your name?", Answer: "Ada"},
+			{Index: 1, Question: "Should I be serious or a little playful when I talk to you?", Answer: "playful"},
+		},
+	}}
+	svc := NewService(testRepository(t, chatFlowDB()), model, WithProfileProvider(profiles))
 
 	emitter := &fakeStreamEmitter{}
 	reply, err := svc.CreateChatStream(context.Background(), testUserID, testSessionID, "What next?", emitter)
@@ -137,6 +159,15 @@ func TestServiceCreateChatStream(t *testing.T) {
 
 	if !model.streamed {
 		t.Error("expected the streaming prediction to be used")
+	}
+	if model.profile == nil {
+		t.Fatal("expected the profile to be passed to the model")
+	}
+	if model.profile.Name != "Ada" {
+		t.Errorf("profile name = %q, want Ada", model.profile.Name)
+	}
+	if len(model.profile.Questions) != 2 || model.profile.Questions[1].Answer != "playful" {
+		t.Errorf("profile questions = %+v, want the user's answers", model.profile.Questions)
 	}
 	if !emitter.started {
 		t.Error("expected the stream to be started")

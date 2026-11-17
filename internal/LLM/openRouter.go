@@ -14,8 +14,6 @@ import (
 var newOpenRouterClient = func(apiKey string) *openrouter.OpenRouter {
 	return openrouter.New(
 		openrouter.WithSecurity(apiKey),
-		// The SDK default client has no timeout; without one a stuck provider
-		// response can hold a request or worker goroutine forever.
 		openrouter.WithClient(&http.Client{Timeout: DefaultRequestTimeout}),
 	)
 }
@@ -29,8 +27,6 @@ func NewOpenRouterService(apiKey, modelName, embedModelName string) *LLM {
 	}
 }
 
-// requestContext bounds a provider call by the service timeout while keeping
-// the caller's cancellation (request or job context) intact.
 func (l *LLM) requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -108,7 +104,7 @@ Generate the perfect session name now.`,
 	return "", fmt.Errorf("could not extract session name from response")
 }
 
-func predictionSystemPrompt(previousChats []string, modeName, modePrompt string) string {
+func predictionSystemPrompt(previousChats []string, profile *Profile, modeName, modePrompt string) string {
 	systemPrompt := `You are a fortune teller in JanoLuck, a playful fortune-telling app. The user asks about their life — love, career, money, big decisions — and you reply with a short fortune that feels magical and personal.
 
 ### You are entertaining, not predicting
@@ -146,6 +142,16 @@ Mode instructions:
 %s`, modeName, modePrompt)
 	}
 
+	if profileContext := formatProfile(profile); profileContext != "" {
+		systemPrompt += `
+
+The user shared this profile when they created it. Use it to shape the prediction's length, tone, and style so it feels personal to them, but never let it override the rules above.
+
+` + profileContext + `
+
+Do not address the user by name in every prediction. Use their name only when it feels natural or adds warmth.`
+	}
+
 	if previousContext := formatPreviousChats(previousChats); previousContext != "" {
 		systemPrompt += `
 
@@ -176,7 +182,7 @@ func predictionMessages(content, systemPrompt string) []components.ChatMessages 
 	}
 }
 
-func (l *LLM) GeneratePrediction(ctx context.Context, content string, previousChats []string, modeName, modePrompt string) (string, error) {
+func (l *LLM) GeneratePrediction(ctx context.Context, content string, previousChats []string, profile *Profile, modeName, modePrompt string) (string, error) {
 	ctx, cancel := l.requestContext(ctx)
 	defer cancel()
 
@@ -184,7 +190,7 @@ func (l *LLM) GeneratePrediction(ctx context.Context, content string, previousCh
 
 	res, err := client.Chat.Send(ctx, components.ChatRequest{
 		Model:    openrouter.Pointer(l.model),
-		Messages: predictionMessages(content, predictionSystemPrompt(previousChats, modeName, modePrompt)),
+		Messages: predictionMessages(content, predictionSystemPrompt(previousChats, profile, modeName, modePrompt)),
 	}, nil)
 
 	if err != nil {
@@ -208,11 +214,12 @@ func (l *LLM) GeneratePredictionStream(
 	ctx context.Context,
 	content string,
 	previousChats []string,
+	profile *Profile,
 	modeName, modePrompt string,
 	onChunk func(string) error,
 ) (string, error) {
 	messages := []chatMessage{
-		{Role: "system", Content: predictionSystemPrompt(previousChats, modeName, modePrompt)},
+		{Role: "system", Content: predictionSystemPrompt(previousChats, profile, modeName, modePrompt)},
 		{Role: "user", Content: content},
 	}
 
