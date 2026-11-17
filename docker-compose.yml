@@ -1,3 +1,8 @@
+x-app-environment: &app-environment
+   DATABASE_URL: postgresql://myuser:mysecretpassword@postgres:5432/janoluck?sslmode=disable
+   REDIS_ADDR: redis:6379
+   KAFKA_BROKERS: kafka:9092
+
 services:
    postgres:
       image: pgvector/pgvector:pg18
@@ -23,11 +28,12 @@ services:
       environment:
          KAFKA_NODE_ID: 1
          KAFKA_PROCESS_ROLES: broker,controller
-         KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-         KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+         KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+         KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9092
+         KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+         KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-         KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-         KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+         KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
@@ -36,12 +42,14 @@ services:
          KAFKA_LOG_DIRS: /var/lib/kafka/data
          KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       ports:
-         - "9092:9092"
+         - "9092:9094"
       volumes:
          - kafka_data:/var/lib/kafka/data
       restart: unless-stopped
       healthcheck:
-         test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+         test:
+            - CMD-SHELL
+            - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1
          interval: 10s
          timeout: 5s
          retries: 10
@@ -57,10 +65,64 @@ services:
          - redis_data:/data
       restart: unless-stopped
       healthcheck:
-         test: ["CMD", "redis-cli", "ping"]
+         test: ["CMD-SHELL", "redis-cli ping >/dev/null 2>&1 || /opt/redis-stack/bin/redis-cli ping >/dev/null 2>&1"]
          interval: 10s
          timeout: 5s
          retries: 5
+
+   migrate:
+      image: ghcr.io/kukymbr/goose-docker:3.28.0
+      container_name: JanoLuck_Migrate
+      environment:
+         GOOSE_DRIVER: postgres
+         GOOSE_DBSTRING: postgresql://myuser:mysecretpassword@postgres:5432/janoluck?sslmode=disable
+      volumes:
+         - ./sql/schema:/migrations:ro
+      depends_on:
+         postgres:
+            condition: service_healthy
+      restart: "no"
+
+   server:
+      build:
+         context: .
+         target: server
+      container_name: JanoLuck_Server
+
+      env_file:
+         - .env
+      environment: *app-environment
+      ports:
+         - "3000:3000"
+      restart: unless-stopped
+      depends_on:
+         postgres:
+            condition: service_healthy
+         redis:
+            condition: service_healthy
+         kafka:
+            condition: service_healthy
+         migrate:
+            condition: service_completed_successfully
+
+   worker:
+      build:
+         context: .
+         target: worker
+      container_name: JanoLuck_Worker
+      env_file:
+         - .env
+      environment: *app-environment
+      restart: unless-stopped
+      depends_on:
+         postgres:
+            condition: service_healthy
+         redis:
+            condition: service_healthy
+         kafka:
+            condition: service_healthy
+         migrate:
+            condition: service_completed_successfully
 
 volumes:
    postgres_data:

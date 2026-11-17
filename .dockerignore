@@ -1,0 +1,19 @@
+/.git
+/.gitignore
+/.idea
+/.vscode
+
+# Local environment file. Compose injects the container values itself.
+/.env
+/.env.*
+!/.env.example
+
+# Local build output
+/bin/
+/server
+/worker
+/cli
+./cmd/cli
+*.exe
+*.test
+*.out
