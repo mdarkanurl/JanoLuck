@@ -4,13 +4,17 @@ An AI fortune-telling chat app built with Go. Ask about love, career, money, or 
 
 ## Demo
 
-[Watch the demo video](demoContents/project_demo.mp4)
+[Watch the demo video](https://drive.google.com/file/d/1xTATCY5xtPmAAC-aTfjHLwV7zt-pHVBT/view?usp=sharing)
 
 ## Screenshots
 
-| Chat                                       | SignUp                                                        |
-| ------------------------------------------ | ------------------------------------------------------------- |
-| ![Chat screen](demoContents/chat_page.png) | ![SignUp screen](https://photos.app.goo.gl/r61ZWLudvBvezue27) |
+| Chat                                       |
+| ------------------------------------------ |
+| ![Chat screen](demoContents/chat_page.png) |
+
+| Chat                                       |
+| ------------------------------------------ |
+| ![SignUp screen](demoContents/sign_up.png) |
 
 ## Features
 
