@@ -12,7 +12,7 @@ An AI fortune-telling chat app built with Go. Ask about love, career, money, or 
 | ------------------------------------------ |
 | ![Chat screen](demoContents/chat_page.png) |
 
-| Chat                                       |
+| SignUp                                       |
 | ------------------------------------------ |
 | ![SignUp screen](demoContents/sign_up.png) |
 
