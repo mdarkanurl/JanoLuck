@@ -8,9 +8,9 @@ An AI fortune-telling chat app built with Go. Ask about love, career, money, or 
 
 ## Screenshots
 
-| Chat                                       | SignUp                                     |
-| ------------------------------------------ | ------------------------------------------ |
-| ![Chat screen](demoContents/chat_page.png) | ![SignUp screen](demoContents/sign_up.png) |
+| Chat                                       | SignUp                                                        |
+| ------------------------------------------ | ------------------------------------------------------------- |
+| ![Chat screen](demoContents/chat_page.png) | ![SignUp screen](https://photos.app.goo.gl/r61ZWLudvBvezue27) |
 
 ## Features
 
