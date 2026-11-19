@@ -2,6 +2,8 @@
 
 An AI fortune-telling chat app built with Go. Ask about love, career, money, or big decisions, and get a short, personal answer that streams into a terminal client.
 
+**Note:** This project is just for fun. Don't take any of these predictions seriously.
+
 ## Demo
 
 [Watch the demo video](https://drive.google.com/file/d/1xTATCY5xtPmAAC-aTfjHLwV7zt-pHVBT/view?usp=sharing)
